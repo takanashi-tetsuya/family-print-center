@@ -116,11 +116,18 @@
 
         <section id="preview-panel" class="panel preview-panel" aria-labelledby="preview-title" data-reveal hidden>
           <div class="section-heading"><span class="preview-symbol"><svg class="icon"><use href="#icon-eye"/></svg></span><h2 id="preview-title"><small>PREVIEW</small>文件預覽</h2><span id="page-count" class="page-count"></span></div>
-          <div class="preview-toolbar" aria-label="文件預覽頁面控制">
+          <div id="preview-file-controls" class="preview-file-controls" aria-label="切換預覽文件">
+            <button id="previous-file" class="preview-page-button" type="button" aria-label="上一份文件" disabled><svg class="icon"><use href="#icon-arrow"/></svg></button>
+            <div><label for="preview-file">文件</label><select id="preview-file" aria-label="預覽文件"></select></div>
+            <button id="next-file" class="preview-page-button" type="button" aria-label="下一份文件" disabled><svg class="icon"><use href="#icon-arrow"/></svg></button>
+          </div>
+          <div id="preview-page-controls" class="preview-toolbar" aria-label="文件預覽頁面控制">
             <button id="previous-page" class="preview-page-button" type="button" disabled><svg class="icon"><use href="#icon-arrow"/></svg>上一頁</button>
-            <span id="preview-page-position" role="status">第 1 頁</span>
+            <label class="preview-page-entry">第 <input id="preview-page-number" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" value="1" aria-label="預覽頁碼"><span id="preview-page-total">/ 1 頁</span></label>
+            <span id="preview-page-position" class="visually-hidden" role="status">第 1 頁</span>
             <button id="next-page" class="preview-page-button" type="button" disabled>下一頁<svg class="icon"><use href="#icon-arrow"/></svg></button>
           </div>
+          <p id="preview-unavailable" class="preview-unavailable" role="status" hidden></p>
           <div class="preview-frame">
             <div id="preview-loading" class="preview-loading" role="status"><span class="spinner"></span><span>正在載入這一頁…</span></div>
             <div id="preview-error" class="preview-error" role="alert" hidden>這一頁暫時無法顯示。可以使用下方的「開啟 PDF」查看完整文件。</div>
@@ -153,6 +160,7 @@
               <div id="preset-field" class="settings-group" hidden><span id="preset-label" class="field-label">列印效果</span><div id="preset-buttons" class="segmented" role="group" aria-labelledby="preset-label"></div><p id="preset-hint" class="field-hint"></p></div>
               <div class="settings-pair"><div class="settings-group"><label for="sides">單面／雙面</label><select id="sides"><option value="">自動</option></select><p id="duplex-hint" class="field-hint" hidden>這台打印機目前未提供雙面選項。</p></div><div class="settings-group"><label for="color-mode">色彩</label><select id="color-mode"><option value="">自動</option></select><p id="color-hint" class="field-hint" hidden>這台打印機只能印黑白。</p></div></div>
               <div class="settings-pair"><div class="settings-group"><label for="media">紙張大小</label><select id="media"><option value="">自動</option></select><p id="media-default-hint" class="field-hint"></p></div><div class="settings-group"><label for="orientation">方向</label><select id="orientation"><option value="">跟文件一樣</option><option value="portrait">直向</option><option value="landscape">橫向</option><option value="reverse-portrait">直向（上下顛倒）</option><option value="reverse-landscape">橫向（上下顛倒）</option></select></div></div>
+              <div class="settings-row margin-launch"><span>頁邊距</span><button id="open-margin-settings" class="text-link" type="button"><span id="margin-summary">自動</span><svg class="icon"><use href="#icon-arrow"/></svg></button></div>
               <div class="advanced-launch"><button id="open-advanced-settings" class="button secondary" type="button"><svg class="icon"><use href="#icon-printer"/></svg><span>更多設定</span><svg class="icon"><use href="#icon-arrow"/></svg></button><p id="advanced-summary" class="field-hint">紙張種類、清晰度、一張多頁等，都是自動。</p></div>
             </fieldset>
             <div class="print-summary"><svg class="icon"><use href="#icon-file"/></svg><span id="print-summary">先選擇文件</span></div>
@@ -177,16 +185,24 @@
       <fieldset id="advanced-fields">
         <div class="advanced-body">
           <nav id="advanced-tabs" class="advanced-tabs" role="tablist" aria-label="設定分類" aria-orientation="vertical">
-            <button id="advanced-tab-paper" type="button" role="tab" aria-selected="true" aria-controls="advanced-panel-paper" data-settings-tab="paper">紙張<small>大小、種類與紙匣</small></button>
+            <button id="advanced-tab-paper" type="button" role="tab" aria-selected="true" aria-controls="advanced-panel-paper" data-settings-tab="paper">紙張<small>大小、頁邊距與紙匣</small></button>
             <button id="advanced-tab-quality" type="button" role="tab" aria-selected="false" aria-controls="advanced-panel-quality" tabindex="-1" data-settings-tab="quality">品質<small>清晰度與省墨</small></button>
             <button id="advanced-tab-layout" type="button" role="tab" aria-selected="false" aria-controls="advanced-panel-layout" tabindex="-1" data-settings-tab="layout">版面<small>縮放、一張多頁與順序</small></button>
             <button id="advanced-tab-device" type="button" role="tab" aria-selected="false" aria-controls="advanced-panel-device" tabindex="-1" data-settings-tab="device">其他<small>這台打印機特有的功能</small></button>
           </nav>
           <div class="advanced-panels">
             <section id="advanced-panel-paper" role="tabpanel" aria-labelledby="advanced-tab-paper" data-settings-panel="paper">
-              <h3>紙張</h3>
+              <h3>頁面設定</h3>
               <div class="settings-group"><label for="advanced-media">紙張大小</label><select id="advanced-media"><option value="">自動</option></select></div>
-              <div id="custom-media-fields" class="custom-media-fields" hidden><div class="settings-pair"><div class="settings-group"><label for="custom-width">寬度（毫米）</label><input id="custom-width" type="number" step="0.01" inputmode="decimal"></div><div class="settings-group"><label for="custom-height">高度（毫米）</label><input id="custom-height" type="number" step="0.01" inputmode="decimal"></div></div><p id="custom-media-hint" class="field-hint"></p></div>
+              <div id="custom-media-fields" class="custom-media-fields"><div class="settings-pair"><div class="settings-group"><label for="custom-width">寬度（毫米）</label><input id="custom-width" type="number" step="0.01" inputmode="decimal" placeholder="依文件／打印機" readonly></div><div class="settings-group"><label for="custom-height">高度（毫米）</label><input id="custom-height" type="number" step="0.01" inputmode="decimal" placeholder="依文件／打印機" readonly></div></div><p id="custom-media-hint" class="field-hint"></p></div>
+              <div class="page-margin-section">
+                <div class="settings-group"><label for="margin-preset">頁邊距</label><select id="margin-preset"><option value="auto">自動 · 保留文件設定</option><option value="normal">一般 · 四邊 25.4 mm</option><option value="narrow">窄 · 四邊 12.7 mm</option><option value="custom">自訂頁邊距</option></select></div>
+                <div class="page-margin-layout">
+                  <div id="margin-fields" class="margin-fields"><div class="settings-group"><label for="margin-top">上（毫米）</label><input id="margin-top" type="number" min="0" max="100" step="0.01" inputmode="decimal" placeholder="自動" disabled></div><div class="settings-group"><label for="margin-bottom">下（毫米）</label><input id="margin-bottom" type="number" min="0" max="100" step="0.01" inputmode="decimal" placeholder="自動" disabled></div><div class="settings-group"><label for="margin-left">左（毫米）</label><input id="margin-left" type="number" min="0" max="100" step="0.01" inputmode="decimal" placeholder="自動" disabled></div><div class="settings-group"><label for="margin-right">右（毫米）</label><input id="margin-right" type="number" min="0" max="100" step="0.01" inputmode="decimal" placeholder="自動" disabled></div></div>
+                  <figure class="page-margin-preview"><div id="margin-paper" class="margin-paper"><div id="margin-content" class="margin-content"><i></i><i></i><i></i><i></i><i></i></div></div><figcaption id="margin-diagram-label">頁面示意 · 自動</figcaption></figure>
+                </div>
+                <p class="field-hint">套用到這次列印的所有頁面。Word／Excel 會調整原檔的頁面設定，PDF、圖片及電子書會等比例縮入頁邊距；文件預覽保留原版面。PowerPoint 保留原始版面；需要自訂頁邊距時，請先另存為 PDF。</p>
+              </div>
               <div id="advanced-options-paper" class="advanced-options-grid"></div>
             </section>
             <section id="advanced-panel-quality" role="tabpanel" aria-labelledby="advanced-tab-quality" data-settings-panel="quality" hidden><h3>品質</h3><div id="advanced-options-quality" class="advanced-options-grid"></div><p class="advanced-note">一般保持「自動」即可。品質越高，列印越慢、也越耗墨。</p></section>

@@ -16,6 +16,64 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from print_center.office_runtime import office_environment
+from print_center.page_layout import (PageLayoutError, oriented_paper,
+                                     validate_area, validate_margins)
+
+
+def apply_page_margins(document, margins, paper=None, orientation=None):
+    """Change the opened original's page styles in memory; never save it.
+
+    Writer and Calc use actual layout margins, so text and tables paginate
+    again. Impress border properties alone do not move existing slide objects
+    reliably; refuse an override rather than pretend that it was applied.
+    """
+    margins = validate_margins(margins)
+    if margins is None:
+        return
+    if document.supportsService("com.sun.star.presentation.PresentationDocument"):
+        raise PageLayoutError("PowerPoint 使用原始版面；調整頁邊距時請先另存為 PDF 再上傳。")
+    writer = document.supportsService("com.sun.star.text.TextDocument")
+    calc = document.supportsService("com.sun.star.sheet.SpreadsheetDocument")
+    if not writer and not calc:
+        raise PageLayoutError("這個文件格式無法直接調整頁邊距，請先另存為 PDF。")
+    try:
+        page_styles = document.getStyleFamilies().getByName("PageStyles")
+        if calc:
+            sheets = document.getSheets()
+            names = {sheets.getByIndex(index).getPropertyValue("PageStyle") for index in range(sheets.getCount())}
+        else:
+            names = {name for name in page_styles.getElementNames() if page_styles.getByName(name).isInUse()}
+            if not names:
+                raise PageLayoutError("無法確認文件使用的頁面樣式，請先另存為 PDF。")
+            # A first-page style can point at a different style for later pages.
+            pending = list(names)
+            while pending:
+                style = page_styles.getByName(pending.pop())
+                follow = style.getPropertyValue("FollowStyle")
+                if follow and follow not in names:
+                    names.add(follow)
+                    pending.append(follow)
+        planned = []
+        for name in names:
+            style = page_styles.getByName(name)
+            original = (style.getPropertyValue("Width") / 100, style.getPropertyValue("Height") / 100)
+            dimensions = oriented_paper(paper, orientation, original)
+            validate_area(*dimensions, margins)
+            planned.append((style, dimensions))
+        # Validate every used style before changing any. A second section or
+        # spreadsheet sheet must not quietly ignore impossible margins.
+        for style, dimensions in planned:
+            if paper is not None or orientation:
+                style.setPropertyValue("Width", round(dimensions[0] * 100))
+                style.setPropertyValue("Height", round(dimensions[1] * 100))
+                style.setPropertyValue("IsLandscape", dimensions[0] > dimensions[1])
+            for property_name, key in (("TopMargin", "top_mm"), ("RightMargin", "right_mm"),
+                                       ("BottomMargin", "bottom_mm"), ("LeftMargin", "left_mm")):
+                style.setPropertyValue(property_name, round(margins[key] * 100))
+    except PageLayoutError:
+        raise
+    except Exception as exc:
+        raise PageLayoutError("LibreOffice 無法套用這份文件的頁邊距，請先另存為 PDF。") from exc
 
 
 def write_font_report(toolkit, path):
@@ -89,6 +147,8 @@ def run(request):
         document = desktop.loadComponentFromURL(source.resolve().as_uri(), "_blank", 0, tuple(load_options))
         if document is None:
             raise RuntimeError("Document cannot be opened")
+        if request.get("margins") is not None:
+            apply_page_margins(document, request["margins"], request.get("paper"), request.get("options", {}).get("orientation-requested"))
         if request.get("mode") == "preview":
             if document.supportsService("com.sun.star.sheet.SpreadsheetDocument"):
                 export_filter = "calc_pdf_Export"
@@ -161,6 +221,11 @@ if __name__ == "__main__":
     try:
         result = run(json.loads(Path(sys.argv[1]).read_text()))
         print(json.dumps(result))
+    except PageLayoutError as error:
+        # A known pre-submission failure is safe to fix and resubmit; do not
+        # confuse it with an ambiguous error after the CUPS call.
+        print(json.dumps({"layout_error": str(error)}, ensure_ascii=False))
+        sys.exit(2)
     except Exception:
         # Detailed document data is intentionally not returned to the web application.
         print("Native Office printing failed", file=sys.stderr)

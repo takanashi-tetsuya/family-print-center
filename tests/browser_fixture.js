@@ -58,7 +58,7 @@ function environment(cookie = "", protocol = "http:", respond = null) {
     constructor(tag = "div", id = "") { this.tagName = tag.toUpperCase(); this.id = id; this.children = []; this.parentNode = null; this.dataset = {}; this.attributes = {}; this.events = new Map(); this._value = ""; this.open = false; this.disabled = false; this.classList = { add() {}, remove() {}, toggle() {} }; }
     get value() { return this.tagName === "SELECT" && !this.options.some((option) => option.value === this._value) ? "" : this._value; }
     set value(value) { this._value = String(value); }
-    get options() { return this.children.filter((child) => child.tagName === "OPTION"); }
+    get options() { return this.children.flatMap((child) => child.tagName === "OPTION" ? [child] : child.tagName === "OPTGROUP" ? child.options : []); }
     get firstElementChild() { return this.children[0] || null; }
     append(...children) { for (const child of children) { child.parentNode?.children && child.remove(); child.parentNode = this; this.children.push(child); } }
     replaceChildren(...children) { this.children.forEach((child) => { child.parentNode = null; }); this.children = []; this.append(...children); }
@@ -78,10 +78,10 @@ function environment(cookie = "", protocol = "http:", respond = null) {
     get willValidate() { return this.tagName === "INPUT" && !this.disabled; }
     get validity() { const n = Number(this.value); return { valid: !this.validationMessage && (!this.required || this.value !== "") && (!this.value || (this.min === undefined || n >= Number(this.min)) && (this.max === undefined || n <= Number(this.max))) }; }
     reportValidity() { return this.id === "advanced-form" ? this.elements.every((element) => !element.willValidate || element.validity.valid) : this.validity.valid; }
-    get elements() { return [...document.querySelectorAll("[data-cups-option]"), get("custom-width"), get("custom-height"), get("advanced-media"), get("advanced-print-mode")]; }
+    get elements() { return [...document.querySelectorAll("[data-cups-option]"), ...["custom-width", "custom-height", "advanced-media", "advanced-print-mode", "margin-top", "margin-right", "margin-bottom", "margin-left"].map(get)]; }
   }
-  const selects = new Set(["sides", "color-mode", "media", "orientation", "advanced-media", "advanced-print-mode"]);
-  const inputs = new Set(["copies", "custom-width", "custom-height", "page-ranges"]);
+  const selects = new Set(["sides", "color-mode", "media", "orientation", "advanced-media", "advanced-print-mode", "margin-preset", "preview-file"]);
+  const inputs = new Set(["copies", "custom-width", "custom-height", "page-ranges", "preview-page-number", "margin-top", "margin-right", "margin-bottom", "margin-left"]);
   function get(id) { if (!elements.has(id)) elements.set(id, new Element(selects.has(id) ? "select" : inputs.has(id) ? "input" : "div", id)); return elements.get(id); }
   const document = {
     get cookie() { return storedCookie; },
@@ -100,6 +100,8 @@ function environment(cookie = "", protocol = "http:", respond = null) {
   };
   function Option(text, value) { const element = new Element("option"); element.textContent = text; element.value = value; return element; }
   get("copies").value = "1";
+  get("margin-preset").append(...["auto", "normal", "narrow", "custom"].map((value) => new Option(value, value)));
+  get("margin-preset").value = "auto";
   get("orientation").append(...["", "portrait", "landscape", "reverse-portrait", "reverse-landscape"].map((value) => new Option(value, value)));
   const response = { printers: [], default: "" };
   const window = { location: { protocol, origin: `${protocol}//example.test` }, setTimeout: () => 1, clearTimeout() {}, setInterval() {}, matchMedia: () => ({ matches: false }), crypto: webcrypto };

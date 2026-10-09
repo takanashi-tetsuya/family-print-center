@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -20,6 +21,8 @@ from .cups_client import CupsClient, CupsError, OPTION_VALUE, safe_print_option
 from .discovery import Discovery
 from .fonts import FontStore
 from .native_office import NativeOfficePrinter
+from .page_layout import (PageLayoutError, PRESENTATION_EXTENSIONS, fitted_pdf, paper_for_options,
+                          validate_margins, validate_pdf_layout)
 
 
 def validate_options(payload, printer, pages):
@@ -323,46 +326,81 @@ def create_app(config=None, cups_client=None, discovery=None):
         request_id = payload.get("request_id")
         if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,100}", request_id):
             raise ValueError("缺少有效的打印請求編號，請重新整理頁面。")
-        with uploads.lock:
-            record = uploads.get(payload.get("upload_id"))
-            if record["status"] != "ready":
-                return jsonify(error="文件尚未準備好，請等待轉換完成。"), 409
-            if request_id in record["requests"]:
-                if record["requests"][request_id] is None:
-                    return jsonify(error="這次提交的結果尚未確認，請先查看任務列表；為避免重複打印，同一請求不會再次送出。"), 409
-                return jsonify(job_id=record["requests"][request_id], reused=True)
-            if record["id"] in uploads.active_prints:
-                return jsonify(error="這份文件正在提交另一個任務，請稍後再試。"), 409
-            printer = next((printer for printer in cups.printers()["printers"] if printer["name"] == payload.get("printer")), None)
-            if not printer:
-                raise ValueError("請選擇已加入的打印機。")
-            mode = payload.get("print_mode", "auto")
-            if hasattr(cups, "resolve_print_mode"):
-                printer = cups.resolve_print_mode(printer, mode)
-            elif mode != "auto":
-                raise ValueError("此打印機不支援所選的打印模式。")
-            if not printer["accepting"] or printer["state"] == 5:
-                raise ValueError("打印機已暫停或不接受任務，請先恢復打印機。")
-            # Native Office pagination can change with printer paper settings.
-            options = validate_options(payload, printer, None if record.get("native") else record["pages"])
-            if hasattr(cups, "validate_job_options"):
-                cups.validate_job_options(printer["name"], options)
-            record["requests"][request_id] = None
-            uploads.write(record)
-            uploads.active_prints.add(record["id"])
-        try:
-            if record.get("native"):
-                job_id = native_printer.print_file(printer["name"], uploads.directory(record["id"]) / f"input.{record['extension']}", record["name"], options, request_id)
-            else:
-                job_id = cups.print_file(printer["name"], uploads.directory(record["id"]) / "document.pdf", record["name"], options)
+        with ExitStack() as temporary_files:
             with uploads.lock:
-                current = uploads.get(record["id"])
-                current["requests"][request_id] = job_id
-                uploads.write(current)
-        finally:
-            with uploads.lock:
-                uploads.active_prints.discard(record["id"])
-        return jsonify(job_id=job_id)
+                record = uploads.get(payload.get("upload_id"))
+                if record["status"] != "ready":
+                    return jsonify(error="文件尚未準備好，請等待轉換完成。"), 409
+                if request_id in record["requests"]:
+                    if record["requests"][request_id] is None:
+                        return jsonify(error="這次提交的結果尚未確認，請先查看任務列表；為避免重複打印，同一請求不會再次送出。"), 409
+                    return jsonify(job_id=record["requests"][request_id], reused=True)
+                if record["id"] in uploads.active_prints:
+                    return jsonify(error="這份文件正在提交另一個任務，請稍後再試。"), 409
+                printer = next((printer for printer in cups.printers()["printers"] if printer["name"] == payload.get("printer")), None)
+                if not printer:
+                    raise ValueError("請選擇已加入的打印機。")
+                mode = payload.get("print_mode", "auto")
+                if hasattr(cups, "resolve_print_mode"):
+                    printer = cups.resolve_print_mode(printer, mode)
+                elif mode != "auto":
+                    raise ValueError("此打印機不支援所選的打印模式。")
+                if not printer["accepting"] or printer["state"] == 5:
+                    raise ValueError("打印機已暫停或不接受任務，請先恢復打印機。")
+                # Native Office pagination can change with printer paper settings.
+                options = validate_options(payload, printer, None if record.get("native") else record["pages"])
+                margins = validate_margins(payload.get("margins"))
+                paper = None
+                directory = uploads.directory(record["id"])
+                source = directory / (f"input.{record['extension']}" if record.get("native") else "document.pdf")
+                if margins is not None:
+                    if record.get("native") and record["extension"] in PRESENTATION_EXTENSIONS:
+                        raise PageLayoutError("PowerPoint 使用原始版面；調整頁邊距時請先另存為 PDF 再上傳。")
+                    if options.get("print-scaling") not in {None, "none"}:
+                        raise PageLayoutError("已指定頁邊距，縮放請設為「自動」或「原始大小」，避免重複縮放。")
+                    # Office Auto preserves its original section/sheet sizes;
+                    # fixed-layout PDFs fit to the queue's known default paper.
+                    paper = paper_for_options(options, {} if record.get("native") else printer["capabilities"])
+                    # Layout has already been applied once. A second CUPS fit
+                    # could trim its blank margins and undo the user's choice.
+                    options["print-scaling"] = "none"
+                if hasattr(cups, "validate_job_options"):
+                    cups.validate_job_options(printer["name"], options)
+                record["requests"][request_id] = None
+                uploads.write(record)
+                uploads.active_prints.add(record["id"])
+            submission_started = False
+            try:
+                if margins is not None and not record.get("native"):
+                    # Protect this upload from removal, but let unrelated
+                    # uploads and polling continue while a large PDF is fitted.
+                    validate_pdf_layout(source, margins, paper, options.get("orientation-requested"))
+                    source = temporary_files.enter_context(fitted_pdf(source, margins, paper, options.get("orientation-requested")))
+                submission_started = True
+                if record.get("native"):
+                    layout = {"margins": margins, "paper": paper} if margins is not None else {}
+                    job_id = native_printer.print_file(printer["name"], source, record["name"], options, request_id, **layout)
+                else:
+                    job_id = cups.print_file(printer["name"], source, record["name"], options)
+                with uploads.lock:
+                    current = uploads.get(record["id"])
+                    current["requests"][request_id] = job_id
+                    uploads.write(current)
+            except Exception as error:
+                if not submission_started or isinstance(error, PageLayoutError):
+                    # PDF preparation has not called CUPS. A known UNO layout
+                    # error also guarantees no submission. Correct and retry
+                    # those failures without losing the duplicate-job guard
+                    # for every uncertain error after submission began.
+                    with uploads.lock:
+                        current = uploads.get(record["id"])
+                        current["requests"].pop(request_id, None)
+                        uploads.write(current)
+                raise
+            finally:
+                with uploads.lock:
+                    uploads.active_prints.discard(record["id"])
+            return jsonify(job_id=job_id)
 
     admin_views.register(app, cups, discovery, token, body)
 

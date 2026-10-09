@@ -2,6 +2,7 @@
 import { $, state } from "./core.js";
 import { basicDriverOptions, selectedPrinter, printerCapabilities, printOptionDefinitions } from "./printers.js";
 import { copiesValue } from "./print.js";
+import { validMargins, renderMarginSummary } from "./margins.js";
 
 const preferenceCookie = "fpc_print_preferences";
 const preferenceLifetime = 365 * 24 * 60 * 60;
@@ -40,7 +41,8 @@ function readPreferences() {
         if (!saved || !printModes.has(saved.m) || !Array.isArray(saved.b) || saved.b.length !== 5 || !saved.b.slice(1).every((value) => preferenceString(value))) continue;
         const advanced = Array.isArray(saved.a) ? saved.a.slice(0, 64).filter((pair) => Array.isArray(pair) && pair.length === 2 && preferenceString(pair[0], 128) && pair[0] && !["__proto__", "constructor", "prototype"].includes(pair[0]) && preferenceString(pair[1]) && pair[1]) : [];
         const custom = Array.isArray(saved.c) && saved.c.length === 2 && saved.c.every((value) => Number.isFinite(value) && value > 0 && value <= 5000) ? { width_mm: saved.c[0], height_mm: saved.c[1] } : null;
-        modes.set(saved.m, { copies: Number.isInteger(saved.b[0]) && saved.b[0] >= 1 && saved.b[0] <= 99 ? saved.b[0] : 1, sides: saved.b[1], color: saved.b[2], media: saved.b[3], orientation: saved.b[4], advanced: Object.fromEntries(advanced), custom });
+        const margins = Array.isArray(saved.g) && saved.g.length === 4 ? Object.fromEntries(["top", "right", "bottom", "left"].map((side, index) => [side + "_mm", saved.g[index]])) : null;
+        modes.set(saved.m, { copies: Number.isInteger(saved.b[0]) && saved.b[0] >= 1 && saved.b[0] <= 99 ? saved.b[0] : 1, sides: saved.b[1], color: saved.b[2], media: saved.b[3], orientation: saved.b[4], advanced: Object.fromEntries(advanced), custom, margins: validMargins(margins) ? margins : null });
       }
       empty.printers.set(entry.n, { updated: entry.t, mode: printModes.has(entry.m) ? entry.m : "auto", modes });
     }
@@ -53,7 +55,7 @@ function writePreferences() {
     const now = Math.floor(Date.now() / 1000);
     const entries = [...preferences.printers].filter(([, entry]) => now - entry.updated <= preferenceLifetime)
       .sort(([nameA, entryA], [nameB, entryB]) => Number(nameB === preferences.last) - Number(nameA === preferences.last) || entryB.updated - entryA.updated)
-      .slice(0, 12).map(([name, entry]) => ({ n: name, t: entry.updated, m: entry.mode, s: [...entry.modes].map(([mode, saved]) => ({ m: mode, b: [saved.copies, saved.sides, saved.color, saved.media, saved.orientation], a: Object.entries(saved.advanced), ...(saved.custom ? { c: [saved.custom.width_mm, saved.custom.height_mm] } : {}) })) }));
+      .slice(0, 12).map(([name, entry]) => ({ n: name, t: entry.updated, m: entry.mode, s: [...entry.modes].map(([mode, saved]) => ({ m: mode, b: [saved.copies, saved.sides, saved.color, saved.media, saved.orientation], a: Object.entries(saved.advanced), ...(saved.custom ? { c: [saved.custom.width_mm, saved.custom.height_mm] } : {}), ...(validMargins(saved.margins) ? { g: [saved.margins.top_mm, saved.margins.right_mm, saved.margins.bottom_mm, saved.margins.left_mm] } : {}) })) }));
     const encode = () => btoa(Array.from(new TextEncoder().encode(JSON.stringify({ v: 1, e: now + preferenceLifetime, l: preferences.last, p: entries })), (byte) => String.fromCharCode(byte)).join("")).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     let encoded = encode();
     // Evict older printers first, then inactive modes. The active choices always take priority.
@@ -88,11 +90,11 @@ export function rememberPrintPreferences() {
 }
 
 export function defaultPrintPreferences() {
-  return { copies: 1, sides: "", color: "", media: "", orientation: "", advanced: {}, custom: null };
+  return { copies: 1, sides: "", color: "", media: "", orientation: "", advanced: {}, custom: null, margins: null };
 }
 
 export function currentPrintPreferences() {
-  return { copies: copiesValue(), sides: $("sides").value, color: $("color-mode").value, media: state.mediaChoice, orientation: $("orientation").value, advanced: { ...state.advancedOptions }, custom: state.customMedia ? { ...state.customMedia } : null };
+  return { copies: copiesValue(), sides: $("sides").value, color: $("color-mode").value, media: state.mediaChoice, orientation: $("orientation").value, advanced: { ...state.advancedOptions }, custom: state.customMedia ? { ...state.customMedia } : null, margins: validMargins(state.margins) ? { ...state.margins } : null };
 }
 
 export function validCustomMedia(custom, mode = state.printMode) {
@@ -102,6 +104,8 @@ export function validCustomMedia(custom, mode = state.printMode) {
 }
 
 export function restorePreferenceChoices(saved = defaultPrintPreferences()) {
+  state.margins = validMargins(saved.margins) ? { ...saved.margins } : null;
+  renderMarginSummary();
   $("copies").value = String(Number.isInteger(saved.copies) && saved.copies >= 1 && saved.copies <= 99 ? saved.copies : 1);
   for (const [id, value] of [["sides", saved.sides], ["color-mode", saved.color], ["media", saved.media], ["orientation", saved.orientation]]) {
     $(id).value = Array.from($(id).options).some((option) => option.value === value) ? value : "";

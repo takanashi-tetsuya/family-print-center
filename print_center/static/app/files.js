@@ -61,25 +61,155 @@ export function pageTotal(items) {
   return { count: items.reduce((total, item) => total + item.upload.pages, 0), approximate: items.some((item) => item.upload.native) };
 }
 
-export function renderPreviewPage() {
-  const upload = currentItem()?.upload;
-  if (!upload || upload.status !== "ready") return;
-  const total = Number.isInteger(upload.pages) && upload.pages > 0 ? upload.pages : 1;
-  state.previewPage = Math.max(1, Math.min(total, state.previewPage));
-  const page = state.previewPage;
-  const url = safePagePreviewURL(`/api/uploads/${encodeURIComponent(upload.id)}/pages/${page}/preview.png`);
-  $("preview-page-position").textContent = `第 ${page} / ${total} 頁`;
-  $("previous-page").disabled = page <= 1;
-  $("next-page").disabled = page >= total;
-  const image = $("pdf-preview");
-  image.alt = `${currentItem().name || "文件"}，第 ${page} 頁`;
-  if (url && image.getAttribute("src") !== url) {
-    $("preview-loading").hidden = false;
-    $("preview-error").hidden = true;
-    image.hidden = true;
-    image.src = url;
-    image.closest(".preview-frame").scrollTop = 0;
+let previewRequest = 0;
+let previewURL = null;
+let previewFilesSnapshot = "";
+
+function previewPageTotal(upload) {
+  return Number.isInteger(upload?.pages) && upload.pages > 0 ? upload.pages : 1;
+}
+
+function cancelPreview() {
+  previewRequest += 1;
+  previewURL = null;
+  $("pdf-preview").removeAttribute("src");
+  $("pdf-preview").hidden = true;
+  $("preview-loading").hidden = true;
+  $("preview-error").hidden = true;
+}
+
+// The selector uses the same items as the upload list without changing their print order.
+function renderPreviewFiles() {
+  const selector = $("preview-file");
+  const snapshot = JSON.stringify(state.items.map((item) => [item.key, item.name, itemPhase(item)]));
+  if (snapshot !== previewFilesSnapshot) {
+    previewFilesSnapshot = snapshot;
+    selector.replaceChildren(...state.items.map((item, index) => {
+      const phase = itemPhase(item);
+      const suffix = phase === "ready" ? "" : phase === "error" ? "（無法準備）" : "（準備中）";
+      return new Option(`${index + 1}. ${item.name}${suffix}`, item.key);
+    }));
   }
+  selector.value = state.current;
+  selector.disabled = state.printing || state.items.length < 2;
+  $("preview-file-controls").hidden = state.items.length < 2;
+  const index = state.items.findIndex((item) => item.key === state.current);
+  $("previous-file").disabled = state.printing || index <= 0;
+  $("next-file").disabled = state.printing || index < 0 || index >= state.items.length - 1;
+}
+
+export function renderPreviewPage() {
+  const item = currentItem();
+  const upload = item?.upload;
+  if (!upload?.id || upload.status !== "ready") return;
+  const total = previewPageTotal(upload);
+  if (state.previewId !== upload.id) {
+    state.previewId = upload.id;
+    state.previewPage = item.previewPage || 1;
+  }
+  state.previewPage = Math.max(1, Math.min(total, Number.isInteger(state.previewPage) ? state.previewPage : 1));
+  const page = state.previewPage;
+  item.previewPage = page;
+  const input = $("preview-page-number");
+  const fileChanged = input.dataset.previewId !== upload.id;
+  // Polling may finish another upload while someone is typing a page number.
+  if (fileChanged || document.activeElement !== input) {
+    input.value = String(page);
+    input.setCustomValidity("");
+  }
+  input.dataset.previewId = upload.id;
+  input.min = "1";
+  input.max = String(total);
+  input.disabled = state.printing;
+  $("preview-page-total").textContent = `/ ${total} 頁`;
+  $("preview-page-position").textContent = `第 ${page} / ${total} 頁`;
+  $("previous-page").disabled = state.printing || page <= 1;
+  $("next-page").disabled = state.printing || page >= total;
+  const url = safePagePreviewURL(`/api/uploads/${encodeURIComponent(upload.id)}/pages/${page}/preview.png`);
+  if (!url || previewURL === url) return;
+  previewURL = url;
+  const request = ++previewRequest;
+  const image = make("img");
+  image.id = "pdf-preview";
+  image.alt = `${item.name || "文件"}，第 ${page} 頁`;
+  image.decoding = "async";
+  image.hidden = true;
+  $("preview-loading").hidden = false;
+  $("preview-error").hidden = true;
+  $("pdf-preview").hidden = true;
+  $("pdf-preview").closest(".preview-frame").scrollTop = 0;
+  // Each request has its own image. Finishing an older page cannot reveal it after a switch.
+  image.addEventListener("load", () => {
+    if (request !== previewRequest || previewURL !== url) return;
+    $("pdf-preview").replaceWith(image);
+    $("preview-loading").hidden = true;
+    $("preview-error").hidden = true;
+    image.hidden = false;
+  });
+  image.addEventListener("error", () => {
+    if (request !== previewRequest || previewURL !== url) return;
+    $("preview-loading").hidden = true;
+    $("preview-error").hidden = false;
+    $("pdf-preview").hidden = true;
+  });
+  image.src = url;
+}
+
+function commitPreviewPage(report = false) {
+  const item = currentItem();
+  if (state.printing || item?.upload?.status !== "ready") return;
+  const input = $("preview-page-number");
+  const value = input.value.trim();
+  const page = /^\d+$/.test(value) ? Number(value) : NaN;
+  const total = previewPageTotal(item.upload);
+  if (!Number.isSafeInteger(page) || page < 1 || page > total) {
+    if (report) {
+      input.setCustomValidity(`頁碼請輸入 1 到 ${total} 的整數。`);
+      input.reportValidity();
+    } else {
+      input.value = String(state.previewPage);
+      input.setCustomValidity("");
+    }
+    return;
+  }
+  state.previewPage = page;
+  input.value = String(page);
+  input.setCustomValidity("");
+  renderPreviewPage();
+}
+
+export function bindPreviewControls() {
+  $("preview-file").addEventListener("change", (event) => {
+    const item = state.items.find((entry) => entry.key === event.target.value);
+    if (item) selectItem(item);
+  });
+  for (const [id, step] of [["previous-file", -1], ["next-file", 1]]) {
+    $(id).addEventListener("click", () => {
+      const index = state.items.findIndex((item) => item.key === state.current);
+      if (index >= 0 && state.items[index + step]) selectItem(state.items[index + step]);
+    });
+  }
+  for (const [id, step] of [["previous-page", -1], ["next-page", 1]]) {
+    $(id).addEventListener("click", () => {
+      if (state.printing) return;
+      state.previewPage += step;
+      $("preview-page-number").value = String(state.previewPage);
+      renderPreviewPage();
+    });
+  }
+  const input = $("preview-page-number");
+  input.addEventListener("input", () => input.setCustomValidity(""));
+  input.addEventListener("blur", () => commitPreviewPage());
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitPreviewPage(true);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      input.value = String(state.previewPage);
+      input.setCustomValidity("");
+    }
+  });
 }
 
 function renderPreview() {
@@ -90,12 +220,12 @@ function renderPreview() {
   const pdf = ready ? safePreviewURL(upload.preview_url || (!upload.native ? `/api/uploads/${encodeURIComponent(upload.id)}/pdf` : null)) : null;
   const preview = ready && (upload.pages > 0 || upload.page_preview_url) ? safePagePreviewURL(upload.page_preview_url || `/api/uploads/${encodeURIComponent(upload.id)}/pages/1/preview.png`) : null;
   $("native-description").textContent = preview ? "可以先看 LibreOffice 產生的預覽，實際列印仍使用 Office 原檔。字型與版面由 LibreOffice 處理。" : "Office 原檔已準備完成，目前沒有可用預覽。實際列印由 LibreOffice 處理，頁數與分頁依原檔設定。";
-  $("preview-panel").hidden = !preview;
+  renderPreviewFiles();
+  $("preview-panel").hidden = !item;
+  $("preview-page-controls").hidden = !preview;
+  $("pdf-preview").closest(".preview-frame").hidden = !preview;
+  $("preview-unavailable").hidden = !!preview;
   if (preview) {
-    if (state.previewId !== upload.id) {
-      state.previewId = upload.id;
-      state.previewPage = 1;
-    }
     renderPreviewPage();
     $("open-preview").hidden = !pdf;
     if (pdf) $("open-preview").href = pdf;
@@ -105,9 +235,17 @@ function renderPreview() {
     $("preview-caption").textContent = state.items.length > 1 ? `第 ${state.items.indexOf(item) + 1} / ${state.items.length} 份：${item.name} · ${caption}` : caption;
     $("spreadsheet-hint").hidden = !/\.(xlsx?|ods|csv|tsv)$/i.test(item.name || "");
   } else {
-    $("pdf-preview").removeAttribute("src");
-    $("pdf-preview").hidden = true;
+    cancelPreview();
     $("open-preview").removeAttribute("href");
+    $("open-preview").hidden = true;
+    $("page-count").textContent = "";
+    $("preview-caption").textContent = item ? `第 ${state.items.indexOf(item) + 1} / ${state.items.length} 份：${item.name}` : "";
+    const phase = item ? itemPhase(item) : "waiting";
+    $("preview-unavailable").textContent = ready ? "這份文件目前沒有可用預覽。" : phase === "error" ? "這份文件無法準備，請查看文件清單中的提示。" : "這份文件正在準備，完成後會自動顯示預覽。";
+    $("preview-page-number").disabled = true;
+    $("previous-page").disabled = true;
+    $("next-page").disabled = true;
+    $("spreadsheet-hint").hidden = true;
     state.previewId = null;
     state.previewPage = 1;
   }
@@ -179,6 +317,7 @@ export function renderFiles() {
     parts.row.classList.toggle("current", many && current);
     parts.row.classList.toggle("failed", phase === "error" || !!item.printError);
     parts.pick.setAttribute("aria-pressed", String(many && current));
+    parts.pick.disabled = state.printing;
     parts.meta.textContent = fileMeta(item, phase);
     // Errors stay on their file until it is removed or sent successfully.
     const error = phase === "error" ? item.upload.error || "文件無法轉換，請檢查文件格式後重新上傳。" : item.printError ? `沒有送出：${item.printError}` : "";
@@ -215,7 +354,7 @@ export function renderFiles() {
 }
 
 function selectItem(item) {
-  if (state.current === item.key) return;
+  if (state.printing || !state.items.includes(item) || state.current === item.key) return;
   state.current = item.key;
   renderFiles();
 }

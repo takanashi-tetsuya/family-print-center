@@ -24,6 +24,7 @@ export const state = {
   healthy: false,
   advancedOptions: {},
   customMedia: null,
+  margins: null,
   mediaChoice: "",
   printMode: "auto",
   printerPreferencesLoaded: false,

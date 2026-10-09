@@ -402,6 +402,15 @@ body:not(.has-entered) .header-inner { border-bottom-color: transparent; }
 .native-document p { font-size: 10px; color: var(--muted); line-height: 1.9; margin: 7px 0 0; }
 .page-count { margin-left: auto; padding: 5px 9px; border: 1px solid var(--line); font-size: 11px; white-space: nowrap; }
 .preview-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 0 0 16px; color: var(--muted); font-size: 10px; }
+.preview-file-controls { display: grid; grid-template-columns: 36px minmax(0, 1fr) 36px; align-items: end; gap: 10px; padding-bottom: 18px; }
+.preview-file-controls label { display: block; font-size: 10px; margin-bottom: 7px; color: var(--muted); }
+.preview-file-controls select { height: 36px; }
+.preview-file-controls .preview-page-button { padding: 8px; height: 36px; }
+.preview-file-controls > button:first-child .icon { transform: rotate(180deg); }
+.preview-page-entry { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.preview-page-entry input { width: 48px; height: 34px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); text-align: center; font-size: 12px; }
+.preview-page-entry input:focus { border-color: var(--ink); }
+.preview-unavailable { display: grid; place-items: center; min-height: 180px; margin: 0; padding: 24px; border: 1px dashed var(--line); color: var(--muted); font-size: 12px; line-height: 1.8; }
 .preview-page-button { display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--line); background: transparent; min-height: 34px; padding: 7px 12px; color: var(--ink); font-size: 11px; transition: background .15s; }
 .preview-page-button .icon { width: 13px; height: 13px; }
 .preview-page-button:first-child .icon { transform: rotate(180deg); }
@@ -557,6 +566,29 @@ select:disabled { cursor: not-allowed; }
 .custom-media-fields { margin: -2px 0 22px; padding: 16px; border: 1px solid var(--line); background: var(--wash); }
 .custom-media-fields .settings-group { margin: 0; }
 .custom-media-fields input { width: 100%; min-width: 0; height: 44px; padding: 0 10px; border: 1px solid var(--line); border-radius: 0; background: var(--paper); font-size: 12px; }
+.custom-media-fields input:disabled { opacity: 1; color: var(--muted); background: transparent; }
+.margin-launch { margin-bottom: 20px; font-size: 11px; gap: 18px; }
+.margin-launch .text-link { display: flex; align-items: center; justify-content: flex-end; gap: 8px; font-size: 10px; border: 0; background: transparent; padding: 7px 0; text-align: right; max-width: 78%; }
+.margin-launch .icon { flex-shrink: 0; width: 13px; height: 13px; }
+.page-margin-section { padding: 22px 0; margin-bottom: 22px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.page-margin-layout { display: grid; grid-template-columns: minmax(0, 1fr) 118px; gap: 25px; align-items: center; }
+.margin-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 15px 18px; }
+.margin-fields .settings-group { margin: 0; min-width: 0; }
+.margin-fields input { width: 100%; min-width: 0; height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 0; background: var(--paper); color: var(--ink); font-size: 12px; }
+.margin-fields input:disabled { color: var(--muted); background: var(--wash); }
+.page-margin-preview { margin: 0; }
+.margin-paper { position: relative; width: 90px; aspect-ratio: 210 / 297; background: white; border: 1px solid #a99f93; margin: 0 auto; box-shadow: 4px 5px 0 var(--wash); }
+.margin-content { position: absolute; inset: 12%; border: 1px dashed #b6aa9b; padding: 10px 5px; overflow: hidden; }
+.margin-content i { display: block; height: 2px; margin-bottom: 7px; background: #c9beb1; }
+.margin-content i:last-child { width: 60%; }
+.page-margin-preview figcaption { text-align: center; font-size: 9px; color: var(--muted); line-height: 1.6; margin-top: 12px; }
+@media (max-width: 420px) {
+  .page-margin-layout { grid-template-columns: minmax(0, 1fr) 82px; gap: 15px; }
+  .margin-paper { width: 65px; }
+  .margin-fields { gap: 12px; }
+  .preview-page-entry { gap: 4px; }
+  .preview-page-entry input { width: 40px; }
+}
 .advanced-footer { position: sticky; bottom: 0; display: flex; justify-content: space-between; align-items: center; gap: 15px; padding: 18px 28px; border-top: 1px solid var(--line); background: var(--paper); }
 .advanced-footer > div { display: flex; gap: 10px; }
 .advanced-footer .button { min-height: 44px; font-size: 11px; padding: 10px 18px; }

@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .conversion import PROFILE_XML, office_environment
 from .cups_client import CupsError
+from .page_layout import PageLayoutError
 
 
 class NativeOfficePrinter:
@@ -79,7 +80,7 @@ class NativeOfficePrinter:
             path.chmod(0o600)
             stream.write(content)
 
-    def print_file(self, printer, source, title, options, request_id):
+    def print_file(self, printer, source, title, options, request_id, *, margins=None, paper=None):
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", printer):
             raise CupsError("這台打印機的代號含有不支援的字元，請管理員在管理後台重新新增。")
         with self.lock, tempfile.TemporaryDirectory(prefix="office-print-", dir=self.config["DATA_DIR"]) as temporary:
@@ -101,6 +102,8 @@ class NativeOfficePrinter:
             request = {"source": str(source.resolve()), "printer": printer, "options": options,
                        "profile": str(profile.resolve()), "job_name": job_name,
                        "cups_receipt": str(receipt.resolve())}
+            if margins is not None:
+                request.update(margins=margins, paper=paper)
             path = root / "request.json"
             path.write_text(json.dumps(request))
             helper = Path(__file__).resolve().parent.parent / "deploy" / "office_worker.py"
@@ -123,6 +126,14 @@ class NativeOfficePrinter:
                         pass
                     process.communicate()
                     raise CupsError("Office 打印準備逾時。請先查看任務列表，確認是否已提交。") from None
+                if process.returncode == 2:
+                    try:
+                        layout_result = json.loads(stdout)
+                    except (ValueError, TypeError):
+                        layout_result = {}
+                    error = layout_result.get("layout_error") if isinstance(layout_result, dict) else None
+                    if isinstance(error, str) and 0 < len(error) <= 300:
+                        raise PageLayoutError(error)
                 if process.returncode:
                     raise CupsError("LibreOffice 無法直接打印這份文件，請確認文件可開啟、沒有密碼且打印機在線。")
             except OSError as exc:

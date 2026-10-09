@@ -1,8 +1,10 @@
 // The 更多設定 dialog and the quick print-effect presets.
 import { $, state, make } from "./core.js";
 import { preferences, rememberPrintPreferences, defaultPrintPreferences, currentPrintPreferences, validCustomMedia, restorePreferenceChoices } from "./preferences.js";
-import { basicDriverOptions, selectedPrinter, availablePrintModes, validPrintMode, printerCapabilities, printModeLabel, mediaLabel, setOptions, printOptionDefinitions, optionText, renderCapabilities } from "./printers.js";
+import { basicDriverOptions, selectedPrinter, availablePrintModes, validPrintMode, printerCapabilities, printModeLabel, mediaLabel, printOptionDefinitions, optionText, renderCapabilities } from "./printers.js";
 import { updatePrintState } from "./print.js";
+import { setPaperOptions, mediaDimensions } from "./paper.js";
+import { renderMarginFields, readMarginFields, validMargins, renderMarginSummary, renderMarginDiagram, marginPaperDimensions, marginOrientation } from "./margins.js";
 
 export function advancedPrintMode() {
   const value = $("advanced-print-mode")?.value;
@@ -14,6 +16,7 @@ function plain(text) {
 }
 
 export function renderAdvancedSummary() {
+  renderMarginSummary();
   const selections = printOptionDefinitions().filter((item) => state.advancedOptions[item.key]);
   const listed = selections.slice(0, 3).map((item) => `${plain(item.label || item.key)}：${plain(optionText(item, state.advancedOptions[item.key]))}`);
   $("advanced-summary").textContent = selections.length ? `已調整 ${listed.join("、")}${selections.length > 3 ? ` 等 ${selections.length} 項` : ""}` : "紙張種類、清晰度、一張多頁等，都是自動。";
@@ -73,17 +76,20 @@ export function selectAdvancedTab(group, focus = false) {
 export function updateCustomMediaFields() {
   const bounds = printerCapabilities(advancedPrintMode()).custom_media;
   const active = !!bounds && $("advanced-media").value === "custom";
-  $("custom-media-fields").hidden = !active;
+  const size = mediaDimensions($("advanced-media").value);
+  $("custom-media-fields").hidden = false;
   for (const [id, minimum, maximum, preferred] of [["custom-width", bounds?.min_width, bounds?.max_width, 210], ["custom-height", bounds?.min_height, bounds?.max_height, 297]]) {
     const input = $(id);
     input.disabled = !active;
+    input.readOnly = !active;
     input.required = active;
-    if (!active) continue;
+    if (!active) { input.value = size ? String(id === "custom-width" ? size.width_mm : size.height_mm) : ""; continue; }
     input.min = String(minimum);
     input.max = String(maximum);
     if (!input.value) input.value = String(Math.max(minimum, Math.min(maximum, preferred)));
   }
-  $("custom-media-hint").textContent = active ? `可用範圍：寬 ${bounds.min_width}–${bounds.max_width} mm，高 ${bounds.min_height}–${bounds.max_height} mm。` : "";
+  $("custom-media-hint").textContent = active ? `可用範圍：寬 ${bounds.min_width}–${bounds.max_width} mm，高 ${bounds.min_height}–${bounds.max_height} mm。` : size ? "尺寸依所選紙張；需要不同尺寸時，選擇「自訂尺寸」。" : "自動會沿用文件與打印機的紙張設定。";
+  renderMarginDiagram();
 }
 
 export function openAdvancedSettings(group = "paper", requestedMedia = null) {
@@ -120,14 +126,17 @@ function renderAdvancedFields(mode, draft) {
   const caps = printerCapabilities(mode);
   const media = Array.isArray(caps.media) ? [...caps.media] : [];
   if (caps.custom_media) media.push("custom");
-  setOptions("advanced-media", media, mediaLabel, draft.media, "自動");
+  setPaperOptions("advanced-media", media, draft.media, draft.custom);
   if ($("advanced-media").value === "custom" && !validCustomMedia(draft.custom, mode)) $("advanced-media").value = "";
   $("custom-width").value = validCustomMedia(draft.custom, mode) ? String(draft.custom.width_mm) : "";
   $("custom-height").value = validCustomMedia(draft.custom, mode) ? String(draft.custom.height_mm) : "";
   updateCustomMediaFields();
+  renderMarginFields(draft.margins);
   const containers = Object.fromEntries(["paper", "quality", "layout", "device"].map((name) => [name, $("advanced-options-" + name)]));
   Object.values(containers).forEach((container) => container.replaceChildren());
   printOptionDefinitions(mode).forEach((definition, index) => {
+    // A supported primary paper selector replaces duplicate driver page-size lists.
+    if (caps.media?.length && basicDriverOptions.media.includes(definition.key) && !draft.advanced?.[definition.key]) return;
     if (definition.key === "finishings" && definition.choices.every((choice) => choice.value === "3")) return;
     // A single choice that is already the printer's default is not a real choice.
     if (definition.choices.length === 1 && definition.choices[0].value === definition.default) return;
@@ -158,7 +167,7 @@ function advancedDraftChoices() {
   const advanced = {};
   document.querySelectorAll("[data-cups-option]").forEach((input) => { if (input.value) advanced[input.dataset.cupsOption] = input.value; });
   const media = $("advanced-media").value;
-  return { ...draft, media, advanced, custom: media === "custom" ? { width_mm: Number($("custom-width").value), height_mm: Number($("custom-height").value) } : draft.custom };
+  return { ...draft, media, advanced, custom: media === "custom" ? { width_mm: Number($("custom-width").value), height_mm: Number($("custom-height").value) } : draft.custom, margins: readMarginFields() };
 }
 
 export function changeAdvancedPrintMode() {
@@ -167,6 +176,7 @@ export function changeAdvancedPrintMode() {
   state.advancedDrafts.set(state.advancedDraftMode, advancedDraftChoices());
   state.advancedDraftMode = mode;
   const draft = state.advancedDrafts.get(mode) || defaultPrintPreferences();
+  state.advancedDrafts.set(mode, draft);
   renderAdvancedFields(mode, draft);
   $("advanced-error").hidden = true;
 }
@@ -179,6 +189,22 @@ export function closeAdvancedSettings() {
 
 export function applyAdvancedSettings(event) {
   event.preventDefault();
+  const margins = readMarginFields();
+  if (margins !== null && !validMargins(margins)) {
+    selectAdvancedTab("paper");
+    $("advanced-error").textContent = "四邊頁邊距請輸入 0 到 100 mm 的數值。";
+    $("advanced-error").hidden = false;
+    return;
+  }
+  const paper = marginPaperDimensions();
+  const fits = (width, height) => width - margins.left_mm - margins.right_mm >= 1 && height - margins.top_mm - margins.bottom_mm >= 1;
+  const automaticOrientation = !marginOrientation() || marginOrientation() === "auto";
+  if (paper && margins && !fits(paper.width_mm, paper.height_mm) && !(automaticOrientation && fits(paper.height_mm, paper.width_mm))) {
+    selectAdvancedTab("paper");
+    $("advanced-error").textContent = "頁邊距超過紙張大小，請保留至少 1 mm 寬、高的內容區域。";
+    $("advanced-error").hidden = false;
+    return;
+  }
   const invalid = Array.from($("advanced-form").elements).find((input) => input.willValidate && !input.validity.valid);
   if (invalid) {
     const panel = invalid.closest("[data-settings-panel]");

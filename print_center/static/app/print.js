@@ -179,6 +179,11 @@ export function requestPrint(event) {
     advanced_options: { ...state.advancedOptions },
   };
   if (settings.media === "custom") settings.custom_media = { ...state.customMedia };
+  if (state.margins) settings.margins = { ...state.margins };
+  if (settings.margins && itemsToPrint().some((item) => item.upload.native && /\.(ppt|pptx|pptm|pps|ppsx|odp)$/i.test(item.upload.name || item.name))) {
+    showToast("PowerPoint 使用原始版面；請將頁邊距設為「自動」，或先另存為 PDF 再上傳。", true);
+    return;
+  }
   // Each file has its own request number; an unchanged retry reuses it so nothing prints twice.
   const entries = itemsToPrint().map((item) => {
     const payload = { upload_id: item.upload.id, ...settings };
@@ -203,6 +208,7 @@ export function requestPrint(event) {
   const preset = activePreset();
   if (preset && printPresets().length > 1) confirmationRow("列印效果", preset.label);
   confirmationRow("基本設定", [sideLabels[settings.sides] || "單雙面自動", colorLabels[settings.color_mode] || "色彩自動", settings.media ? mediaLabel(settings.media) : "紙張自動", settings.orientation ? orientationLabels[settings.orientation] : "方向跟文件一樣"].join(" · "));
+  if (settings.margins) confirmationRow("頁邊距", `上 ${settings.margins.top_mm} · 下 ${settings.margins.bottom_mm} · 左 ${settings.margins.left_mm} · 右 ${settings.margins.right_mm} mm`);
   const advanced = printOptionDefinitions().filter((definition) => settings.advanced_options[definition.key]);
   if (!advanced.length) confirmationRow("更多設定", "全部自動");
   for (const definition of advanced) confirmationRow(definition.label || definition.key, optionText(definition, settings.advanced_options[definition.key]));
@@ -229,7 +235,7 @@ export async function submitPrint() {
     item.sending = true;
     renderFiles();
     try {
-      const result = await api("/api/print", { method: "POST", body: payload, timeout: item.upload.native ? 210000 : 30000 });
+      const result = await api("/api/print", { method: "POST", body: payload, timeout: item.upload.native || payload.margins ? 210000 : 30000 });
       Object.assign(item, { sending: false, sent: true, jobId: result.job_id, printError: "", retry: null });
       sent.push(result.job_id);
     } catch (error) {

@@ -3,6 +3,7 @@ import { $, state, make, icon, api, emptyState } from "./core.js";
 import { preferences, rememberPrintPreferences, defaultPrintPreferences, validCustomMedia, restorePreferenceChoices } from "./preferences.js";
 import { renderAdvancedSummary } from "./settings.js";
 import { updatePrintState } from "./print.js";
+import { paperLabel, setPaperOptions } from "./paper.js";
 
 export const sideLabels = {
   "one-sided": "單面列印",
@@ -44,20 +45,7 @@ export function printModeLabel(mode = state.printMode) {
 }
 
 export function mediaLabel(value) {
-  if (value === "custom") return state.customMedia ? `自訂（${state.customMedia.width_mm} × ${state.customMedia.height_mm} mm）` : "自訂尺寸…";
-  const text = String(value);
-  const lower = text.toLowerCase();
-  const dimensions = lower.match(/_([\d.]+)x([\d.]+)(mm|in)$/);
-  const name = lower.replace(/^[a-z]+_/, "").replace(/_[\d.]+x[\d.]+(?:mm|in)$/, "").replace(/\.borderless$/, "").replace(/a-([3456])/, "a$1").replace(/b-([56])/, "b$1");
-  const names = { a3: "A3", a4: "A4", a5: "A5", a6: "A6", b5: "B5", b6: "B6", c5: "C5 信封", c6: "C6 信封", letter: "Letter", legal: "Legal", executive: "Executive", dl: "DL 信封", monarch: "Monarch 信封", "number-10": "10 號信封", "env-10": "10 號信封", "env-c-6": "C6 信封", "env-dl": "DL 信封", hagaki: "明信片", postcard: "明信片", "photo-l": "L 相片", "16k": "16K", "govt-letter": "8 × 10 吋", "index-4x6": "4 × 6 吋", "index-5x8": "5 × 8 吋", "5x-7": "5 × 7 吋", foolscap: "Foolscap", you4: "洋形 4 號信封", chou3: "長形 3 號信封", chou4: "長形 4 號信封", kaku2: "角形 2 號信封", oufuku: "往返明信片", "l": "L 版相片", "2l": "2L 版相片" };
-  let label = names[name] || (/a[0-9]$|b[0-9]$/.test(name) ? name.toUpperCase() : name.startsWith("custom") ? "自訂紙張" : name || text);
-  if (dimensions) {
-    const round = (number) => dimensions[3] === "in" ? number : String(Math.round(Number(number) * 10) / 10);
-    const size = `${round(dimensions[1])} × ${round(dimensions[2])} ${dimensions[3] === "in" ? "吋" : "mm"}`;
-    label = /^[\d.\-]+x[\d.\-]+(?:mm|in)?$/.test(name) ? `其他尺寸（${size}）` : label === size ? size : `${label}（${size}）`;
-  }
-  if (lower.includes("borderless")) label += " · 無邊框";
-  return label;
+  return paperLabel(value, state.customMedia);
 }
 
 export function setOptions(id, values, labels, preferred, fallback) {
@@ -106,7 +94,7 @@ export function renderCapabilities(resetDefaults = false) {
   if (caps.custom_media) media.push("custom");
   setOptions("sides", sides, sideLabels, resetDefaults ? "" : $("sides").value, "自動");
   setOptions("color-mode", colors.filter((value) => value !== "auto"), colorLabels, resetDefaults ? "" : $("color-mode").value, "自動");
-  setOptions("media", media, mediaLabel, resetDefaults ? "" : $("advanced-settings").open ? state.mediaChoice : $("media").value, "自動");
+  setPaperOptions("media", media, resetDefaults ? "" : $("advanced-settings").open ? state.mediaChoice : $("media").value, state.customMedia);
   state.mediaChoice = $("media").value;
   const definitions = printOptionDefinitions();
   state.advancedOptions = Object.fromEntries(Object.entries(state.advancedOptions).filter(([key, value]) => definitions.some((item) => item.key === key && item.choices.some((choice) => choice.value === value))));

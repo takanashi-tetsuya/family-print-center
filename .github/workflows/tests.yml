@@ -41,3 +41,6 @@ jobs:
         run: |
           node tests/check_browser_preferences.js
           node tests/check_upload_queue.js
+          node tests/check_preview_navigation.js
+          node tests/check_paper_selection.js
+          node tests/check_page_margins.js

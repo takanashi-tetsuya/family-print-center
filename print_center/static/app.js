@@ -4,8 +4,9 @@ import { rememberPrintPreferences } from "./app/preferences.js";
 import { basicDriverOptions, relatedOptionKeys, refreshPrinters } from "./app/printers.js";
 import { advancedPrintMode, renderAdvancedSummary, selectAdvancedTab, updateCustomMediaFields, openAdvancedSettings, changeAdvancedPrintMode, closeAdvancedSettings, applyAdvancedSettings } from "./app/settings.js";
 import { refreshJobs } from "./app/jobs.js";
-import { renderPreviewPage, addFiles } from "./app/files.js";
+import { bindPreviewControls, addFiles } from "./app/files.js";
 import { setRangeMode, copiesValue, updatePrintState, requestPrint, submitPrint } from "./app/print.js";
+import { bindMarginControls, renderMarginFields, renderMarginDiagram } from "./app/margins.js";
 
 function connectionState(healthy) {
   state.healthy = healthy;
@@ -122,6 +123,9 @@ for (const [basic, drivers] of Object.entries(basicDriverOptions)) {
 }
 $("orientation").addEventListener("change", rememberPrintPreferences);
 $("open-advanced-settings").addEventListener("click", () => openAdvancedSettings());
+$("open-margin-settings").addEventListener("click", () => openAdvancedSettings("paper"));
+bindMarginControls();
+for (const id of ["custom-width", "custom-height"]) $(id).addEventListener("input", renderMarginDiagram);
 $("advanced-close").addEventListener("click", closeAdvancedSettings);
 $("advanced-cancel").addEventListener("click", closeAdvancedSettings);
 $("advanced-settings").addEventListener("cancel", () => { $("media").value = state.mediaChoice; state.advancedDrafts = null; });
@@ -136,6 +140,7 @@ $("advanced-reset").addEventListener("click", () => {
   document.querySelectorAll("[data-cups-option]").forEach((input) => { input.value = ""; });
   $("advanced-media").value = "";
   updateCustomMediaFields();
+  renderMarginFields(null);
   $("advanced-error").hidden = true;
 });
 $("advanced-settings").addEventListener("change", (event) => {
@@ -178,18 +183,7 @@ $("refresh-jobs").addEventListener("click", async () => {
   catch (error) { showToast(error.message, true); }
   finally { button.disabled = false; button.classList.remove("loading-icon"); }
 });
-$("previous-page").addEventListener("click", () => { state.previewPage -= 1; renderPreviewPage(); });
-$("next-page").addEventListener("click", () => { state.previewPage += 1; renderPreviewPage(); });
-$("pdf-preview").addEventListener("load", () => {
-  $("preview-loading").hidden = true;
-  $("preview-error").hidden = true;
-  $("pdf-preview").hidden = false;
-});
-$("pdf-preview").addEventListener("error", () => {
-  $("preview-loading").hidden = true;
-  $("preview-error").hidden = false;
-  $("pdf-preview").hidden = true;
-});
+bindPreviewControls();
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshAll(); });
 window.setInterval(() => { if (!document.hidden) refreshAll(); }, 12000);
 refreshAll(true);

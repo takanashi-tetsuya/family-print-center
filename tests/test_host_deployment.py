@@ -16,6 +16,14 @@ UUID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 
 @pytest.fixture
 def host_tools(tmp_path):
+    # Run real scripts in a disposable checkout, with no local font packs.
+    project = tmp_path / "project"
+    for relative in ("deploy/host/storage-ready.sh", "deploy/host/preflight.sh",
+                     "deploy/host/update.sh", "deploy/build-image.sh",
+                     "deploy/fonts/fetch.sh", "deploy/fonts/sources.txt"):
+        target = project / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(PROJECT / relative, target)
     mount = tmp_path / "docker"
     data = mount / "data"
     data.mkdir(parents=True)
@@ -23,6 +31,7 @@ def host_tools(tmp_path):
     mounts.write_text(f"/dev/mock {mount} ext4 rw,noatime 0 0\n")
     config = tmp_path / "tools.json"
     calls = tmp_path / "docker-calls.jsonl"
+    downloads = tmp_path / "download-calls.jsonl"
     values = {
         "uuid": UUID, "configured_root": str(data), "running_root": str(data),
         "available": 29000000, "buildx": True,
@@ -36,7 +45,7 @@ def host_tools(tmp_path):
     init.write_text(f'start_service() {{\n    {guard} || {{ logger -t dockerd "Docker storage unavailable; refusing start"; return 1; }}\n    daemon_start\n}}\n')
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    # All real dependencies remain read-only; only the system-facing tools are mocked.
+    # Never contact Docker, the real host configuration, or font download sites.
     mock = f"#!{sys.executable}\n" + '''import json, os, subprocess, sys
 from pathlib import Path
 values = json.loads(Path(os.environ["FPC_TEST_CONFIG"]).read_text())
@@ -46,6 +55,14 @@ if tool == "awk":
     if args[-1:] == ["/proc/mounts"]:
         args[-1] = os.environ["FPC_TEST_MOUNTS"]
     raise SystemExit(subprocess.call([os.environ["FPC_TEST_REAL_AWK"], *args]))
+if tool in ("curl", "wget"):
+    with open(os.environ["FPC_TEST_DOWNLOADS"], "a") as output:
+        output.write(json.dumps([tool, *args]) + "\\n")
+    target = Path(args[args.index("-o" if tool == "curl" else "-O") + 1])
+    assert target.resolve().is_relative_to(Path(os.environ["FPC_TEST_PROJECT"]).resolve())
+    target.write_bytes(b"incomplete mocked download")
+    print("Simulated offline font download", file=sys.stderr)
+    raise SystemExit(7)
 if tool == "uci":
     key = args[-1]
     result = {"fstab.docker.uuid": values.get("configured_uuid", values["uuid"]),
@@ -75,7 +92,7 @@ elif tool == "docker":
     elif args[:2] == ["compose", "config"]:
         raise SystemExit(1 if values.get("compose_invalid") else 0)
 '''
-    for name in ("awk", "uci", "block", "df", "docker"):
+    for name in ("awk", "uci", "block", "df", "docker", "curl", "wget"):
         script = bin_dir / name
         script.write_text(mock)
         script.chmod(0o755)
@@ -83,6 +100,7 @@ elif tool == "docker":
            "FPC_DOCKER_MOUNT": str(mount), "FPC_DOCKER_DATA_ROOT": str(data),
            "FPC_DOCKER_GUARD": str(guard), "FPC_DOCKER_INIT": str(init),
            "FPC_TEST_CONFIG": str(config), "FPC_TEST_CALLS": str(calls),
+           "FPC_TEST_DOWNLOADS": str(downloads), "FPC_TEST_PROJECT": str(project),
            "FPC_TEST_MOUNTS": str(mounts), "FPC_TEST_REAL_AWK": shutil.which("awk")}
     for key in ("DOCKER_HOST", "DOCKER_CONTEXT", "FPC_DOCKER_UUID", "FPC_MIN_FREE_KB",
                 "DEBIAN_IMAGE", "DOCKER_CLI_IMAGE", "EXTRA_DRIVER_PACKAGES"):
@@ -94,15 +112,21 @@ elif tool == "docker":
             config.write_text(json.dumps(values))
 
         def run(self, script, **updates):
-            return subprocess.run(["sh", str(script)], env={**env, **updates},
+            isolated_script = project / script.relative_to(PROJECT)
+            return subprocess.run(["sh", str(isolated_script)], cwd=project,
+                                  env={**env, **updates},
                                   text=True, capture_output=True, timeout=10)
 
         def commands(self):
             return [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
 
+        def download_commands(self):
+            return [json.loads(line) for line in downloads.read_text().splitlines()] if downloads.exists() else []
+
     tools = Tools()
     tools.mount, tools.data, tools.mounts, tools.env = mount, data, mounts, env
     tools.guard, tools.init = guard, init
+    tools.project = project
     return tools
 
 
@@ -226,6 +250,22 @@ def test_generic_build_keeps_native_buildx_and_image_override(host_tools):
     assert commands[-1][0] == "build"
     assert "DEBIAN_IMAGE=registry.example/debian:custom" in commands[-1]
     assert not any(command[:1] == ["run"] for command in commands)
+
+
+def test_build_with_empty_font_cache_runs_offline_and_cleans_partial_downloads(host_tools):
+    fonts = host_tools.project / "deploy" / "fonts"
+    assert not (fonts / "cache").exists()
+    assert not (fonts / "private").exists()
+    result = host_tools.run(PROJECT / "deploy" / "build-image.sh")
+    assert result.returncode == 0, result.stderr
+    assert "部分字體沒有下載成功" in result.stderr
+    expected_urls = [line.split()[2] for line in (fonts / "sources.txt").read_text().splitlines()
+                     if line.strip() and not line.lstrip().startswith("#")]
+    downloads = host_tools.download_commands()
+    assert [command[-1] for command in downloads] == expected_urls
+    assert all(command[0] == "curl" for command in downloads)
+    assert list((fonts / "cache").iterdir()) == []
+    assert host_tools.commands()[-1][0] == "build"
 
 
 def test_missing_buildx_uses_the_configured_local_socket_and_cli_image(host_tools, tmp_path):

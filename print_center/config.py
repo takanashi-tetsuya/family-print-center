@@ -50,7 +50,10 @@ def settings():
         "ALLOWED_HOSTS": [value.strip().lower() for value in os.environ.get("ALLOWED_HOSTS", "").split(",") if value.strip()],
         "SESSION_COOKIE_HTTPONLY": True,
         "SESSION_COOKIE_SAMESITE": "Strict",
-        "MAX_FORM_MEMORY_SIZE": 64 * 1024,
+        # Werkzeug reads multipart data in 64 KiB chunks and can retain a
+        # partial boundary/CRLF between reads. Leave room for both; file bytes
+        # still stream to disk and remain bounded by MAX_UPLOAD_MB.
+        "MAX_FORM_MEMORY_SIZE": 512 * 1024,
         "MAX_FORM_PARTS": 20,
         # Only used the first time; otherwise a random password is written to DATA_DIR.
         "ADMIN_PASSWORD": os.environ.get("ADMIN_PASSWORD") or None,

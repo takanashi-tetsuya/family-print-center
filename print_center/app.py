@@ -186,7 +186,15 @@ def create_app(config=None, cups_client=None, discovery=None):
 
     @app.errorhandler(RequestEntityTooLarge)
     def too_large(error):
-        return jsonify(error=f"文件太大，上限為 {app.config['MAX_UPLOAD_MB']} MB。"), 413
+        length = request.content_length
+        maximum = request.max_content_length
+        if length is not None and maximum is not None and length > maximum:
+            message = f"文件太大，上限為 {app.config['MAX_UPLOAD_MB']} MB。"
+        else:
+            # Multipart field/boundary limits also raise 413, even when the
+            # file itself is small. Do not report those as exceeding its limit.
+            message = "上傳請求的表單內容過大或項目太多，請重新整理後再選擇文件。"
+        return jsonify(error=message), 413
 
     @app.errorhandler(CupsError)
     def cups_error(error):

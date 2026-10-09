@@ -147,6 +147,20 @@ uci commit firewall
 
 zone 可能是匿名 UCI 項，不一定叫 `firewall.wan`；用 `uci show firewall` 的 `.name='wan'` 辨認真正區域。
 
+## 網頁卡在搜尋打印機／Too many open files
+
+若首頁偶爾可開，但打印機、任務或 JavaScript 載入逾時，先查 `docker compose logs --tail=100`。實機曾出現 `OSError: [Errno 24] Too many open files`：pycups 2.0.4 的 PPD 批次 getter 保留原生引用，反覆讀取能力使已刪除的 PPD 暫存檔仍占用檔案描述符；Python 垃圾回收無法釋放它們。
+
+程式已將 PPD 能力解析及選項衝突檢查移至短生命子程序，結束時回收原生資源。子程序只回傳 JSON，不連線或送印；解析失敗保留 IPP 能力，送印前驗證逾時或失敗則拒絕提交。取得 PPD 但無法解析，也不能視為驗證成功。
+
+更新程式並重新建置映像可持續修正此問題。重啟容器只會暫時釋放舊資源；更新或重啟前先用 `docker exec family-print-center lpstat -W not-completed -o` 查看待印任務，確認列出的工作已結束。不要把提高描述符上限或定時重啟當成修復。
+
+## 小 PDF 卻提示超過上傳上限
+
+舊版表單緩衝上限為 64 KiB，等於 Werkzeug 每次讀取大小；換行跨越讀取邊界時，保留位元組會使解析器觸發 HTTP 413，即使 PDF 只有數 MB。此錯誤曾被誤顯示為超過 100 MB。
+
+程式已將表單緩衝調為 512 KiB，檔案仍串流寫入並受 `MAX_UPLOAD_MB` 限制；表單欄位過大或過多的錯誤也會顯示獨立原因。更新並重新建置映像，再重選文件；不需為此提高檔案上限。真正超過檔案上限的內容仍會被拒絕。
+
 ## LibreOffice 啟動／預覽／選打印機失敗
 
 程式固定 `svp`，不需 X11。啟動以普通應用帳號生成三種 Office 預覽，成功記錄在本次 `/run`，失敗不啟動網頁。健康檢查讀此記錄，不每 30 秒重啟 LibreOffice：

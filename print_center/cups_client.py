@@ -1,10 +1,12 @@
 """CUPS adapter. All calls use a fresh connection; credentials stay on this host."""
 import getpass
+import json
 import math
 import os
 import ipaddress
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -456,6 +458,38 @@ class CupsClient:
         except CupsError as exc:
             return {"available": False, "error": str(exc)}
 
+    def _native_ppd(self):
+        # Real pycups 2.0.4 PPD getters leak native references. Keep native PPDs
+        # out of the long-running web process; in-memory test adapters are safe.
+        constructor = getattr(self.cups, "PPD", None)
+        return isinstance(constructor, type) and constructor.__module__ == "cups"
+
+    def _ppd_worker(self, operation, temporary, **data):
+        payload = json.dumps({"operation": operation, "path": os.fsdecode(temporary), **data},
+                             ensure_ascii=False)
+        if len(payload.encode("utf-8")) > 4 * 1024 * 1024:
+            raise CupsError("打印機設定資料過大，請管理員檢查。")
+        # PPD parsing requires no CUPS connection, credentials or administrator
+        # settings. Do not inherit those into the disposable native process.
+        environment = {key: value for key, value in os.environ.items()
+                       if key in {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ"}}
+        environment.update(PYTHONUNBUFFERED="1", PYTHONDONTWRITEBYTECODE="1")
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "print_center.ppd_worker"], input=payload,
+                text=True, encoding="utf-8", stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, timeout=10, check=False,
+                cwd=Path(__file__).resolve().parents[1], env=environment,
+            )
+            if result.returncode or len(result.stdout.encode("utf-8")) > 4 * 1024 * 1024:
+                raise ValueError("PPD worker failed")
+            reply = json.loads(result.stdout)
+            if not isinstance(reply, dict) or reply.get("operation") != operation:
+                raise ValueError("Invalid PPD worker reply")
+            return reply
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError) as error:
+            raise CupsError("無法核對打印機的驅動設定，請稍後再試；若持續發生，請管理員檢查服務。") from error
+
     def _ppd_options(self, conn, name, attrs, options):
         """Read the driver's job controls without touching queue defaults."""
         temporary = None
@@ -463,6 +497,29 @@ class CupsClient:
             if not hasattr(self.cups, "PPD"):
                 return options, {}
             temporary = conn.getPPD(name)
+            if self._native_ppd():
+                attributes = {key: attrs[key] for key in
+                              ("media-supported", "sides-supported", "print-color-mode-supported")
+                              if key in attrs}
+                reply = self._ppd_worker("options", temporary, attrs=attributes, options=options)
+                controls, aliases = reply.get("options"), reply.get("aliases")
+                if not isinstance(controls, list) or not isinstance(aliases, dict):
+                    raise ValueError("Invalid PPD controls")
+                return controls, aliases
+            return self._ppd_options_local(temporary, attrs, options)
+        except Exception:
+            # IPP-only queues and failed PPD reads retain the IPP controls.
+            return options, {}
+        finally:
+            if isinstance(temporary, (str, bytes, os.PathLike)):
+                try:
+                    Path(os.fsdecode(temporary)).unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _ppd_options_local(self, temporary, attrs, options):
+        """PPD calculation used by the isolated worker and in-memory adapters."""
+        try:
             ppd = self.cups.PPD(temporary)
             groups, installed = [], {}
 
@@ -595,12 +652,6 @@ class CupsClient:
         except Exception:
             # Driverless queues may have no PPD, and a broken PPD must not hide IPP controls.
             return options, {}
-        finally:
-            if isinstance(temporary, (str, bytes, os.PathLike)):
-                try:
-                    Path(os.fsdecode(temporary)).unlink(missing_ok=True)
-                except OSError:
-                    pass
 
     def printers(self):
         def read(conn):
@@ -703,73 +754,90 @@ class CupsClient:
         return self._call(read)
 
     def validate_job_options(self, printer, options):
-        """Validate the whole driver selection locally before either print path."""
+        """Validate the whole driver selection before either print path."""
         temporary = None
         try:
             if not hasattr(self.cups, "PPD"):
                 return
             try:
                 temporary = self._connection().getPPD(printer)
-                ppd = self.cups.PPD(temporary)
             except Exception:
-                # IPP-only printers have no PPD; capability validation still applies.
+                # IPP-only queues have no PPD; capability validation still applies.
                 return
-            all_options = {}
-
-            def collect(groups):
-                for group in groups:
-                    for item in group.options:
-                        all_options[item.keyword] = item
-                    collect(group.subgroups)
-
-            collect(ppd.optionGroups)
-            ppd.markDefaults()
-            aliases = {
-                "sides": ("Duplex", {"one-sided": ["None", "Off", "False"],
-                                      "two-sided-long-edge": ["DuplexNoTumble", "LongEdge"],
-                                      "two-sided-short-edge": ["DuplexTumble", "ShortEdge"]}),
-                "print-color-mode": ("ColorModel", {"monochrome": ["Gray", "Grayscale", "Black"], "color": ["RGB", "CMYK", "Color"]}),
-                "print-quality": ("cupsPrintQuality", {"3": ["Draft", "Low"], "4": ["Normal"], "5": ["High", "Best"]}),
-                "media-source": ("InputSlot", {"auto": ["Auto"], "main": ["Main", "Cassette", "Tray1"],
-                                                 "tray-1": ["Tray1"], "tray-2": ["Tray2"], "tray-3": ["Tray3"],
-                                                 "manual": ["Manual", "MPTray"], "by-pass-tray": ["MPTray", "MultiPurpose"]}),
-                "media-type": ("MediaType", {"stationery": ["Plain", "PlainPaper"], "photographic-glossy": ["Glossy", "GlossyPaper"],
-                                               "photographic-matte": ["Matte", "MattePaper"], "envelope": ["Envelope"]}),
-            }
-            # Generic aliases first, explicit driver selections last. Explicit
-            # DPI aliases come from the PPD's actual HWResolution in capabilities.
-            marked = {}
-            for key, value in options.items():
-                if key == "media" and "PageSize" in all_options and not value.startswith("Custom."):
-                    media_name = re.sub(r"^(?:iso|na|jis|jpn|oe|om)_", "", value).rsplit("_", 1)[0] if "_" in value else value
-                    aliases_for_value = [value, media_name, {"index-4x6": "4x6", "photo": "Photo"}.get(media_name, media_name)]
-                    alias_key = "PageSize"
-                elif key in aliases:
-                    alias_key, mapping = aliases[key]
-                    aliases_for_value = mapping.get(value, [value])
-                else:
-                    continue
-                if alias_key not in all_options:
-                    continue
-                choices = {choice["choice"].lower(): choice["choice"] for choice in all_options[alias_key].choices}
-                selected = next((choices[name.lower()] for name in aliases_for_value if name.lower() in choices), None)
-                if selected:
-                    marked[alias_key] = selected
-            for key, value in options.items():
-                if key in all_options:
-                    choices = {choice["choice"].lower(): choice["choice"] for choice in all_options[key].choices}
-                    if value.lower() in choices:
-                        marked[key] = choices[value.lower()]
-            for key, value in marked.items():
-                ppd.markOption(key, value)
-            if ppd.conflicts():
-                raise ValueError("所選的紙張、紙匣或列印設定不能同時使用，請調整其中一項，或改回「自動」。")
+            if self._native_ppd():
+                reply = self._ppd_worker("validate", temporary, options=options)
+                # Fetching a PPD succeeded: an unreadable PPD or a failed worker
+                # cannot count as having checked its conflicts before printing.
+                if reply.get("available") is not True or type(reply.get("conflict")) is not bool:
+                    raise CupsError("無法核對打印機的驅動設定，請稍後再試。")
+                if reply["conflict"]:
+                    raise ValueError("所選的紙張、紙匣或列印設定不能同時使用，請調整其中一項，或改回「自動」。")
+            else:
+                self._validate_ppd_options_local(temporary, options)
         finally:
             if isinstance(temporary, (str, bytes, os.PathLike)):
                 try:
                     Path(os.fsdecode(temporary)).unlink(missing_ok=True)
                 except OSError:
                     pass
+
+    def _validate_ppd_options_local(self, temporary, options):
+        """Return False only when the native constructor cannot read a PPD."""
+        try:
+            ppd = self.cups.PPD(temporary)
+        except Exception:
+            return False
+        all_options = {}
+
+        def collect(groups):
+            for group in groups:
+                for item in group.options:
+                    all_options[item.keyword] = item
+                collect(group.subgroups)
+
+        collect(ppd.optionGroups)
+        ppd.markDefaults()
+        aliases = {
+            "sides": ("Duplex", {"one-sided": ["None", "Off", "False"],
+                                  "two-sided-long-edge": ["DuplexNoTumble", "LongEdge"],
+                                  "two-sided-short-edge": ["DuplexTumble", "ShortEdge"]}),
+            "print-color-mode": ("ColorModel", {"monochrome": ["Gray", "Grayscale", "Black"], "color": ["RGB", "CMYK", "Color"]}),
+            "print-quality": ("cupsPrintQuality", {"3": ["Draft", "Low"], "4": ["Normal"], "5": ["High", "Best"]}),
+            "media-source": ("InputSlot", {"auto": ["Auto"], "main": ["Main", "Cassette", "Tray1"],
+                                             "tray-1": ["Tray1"], "tray-2": ["Tray2"], "tray-3": ["Tray3"],
+                                             "manual": ["Manual", "MPTray"], "by-pass-tray": ["MPTray", "MultiPurpose"]}),
+            "media-type": ("MediaType", {"stationery": ["Plain", "PlainPaper"], "photographic-glossy": ["Glossy", "GlossyPaper"],
+                                           "photographic-matte": ["Matte", "MattePaper"], "envelope": ["Envelope"]}),
+        }
+        # Generic aliases first, explicit driver selections last. Explicit
+        # DPI aliases come from the PPD's actual HWResolution in capabilities.
+        marked = {}
+        for key, value in options.items():
+            if key == "media" and "PageSize" in all_options and not value.startswith("Custom."):
+                media_name = re.sub(r"^(?:iso|na|jis|jpn|oe|om)_", "", value).rsplit("_", 1)[0] if "_" in value else value
+                aliases_for_value = [value, media_name, {"index-4x6": "4x6", "photo": "Photo"}.get(media_name, media_name)]
+                alias_key = "PageSize"
+            elif key in aliases:
+                alias_key, mapping = aliases[key]
+                aliases_for_value = mapping.get(value, [value])
+            else:
+                continue
+            if alias_key not in all_options:
+                continue
+            choices = {choice["choice"].lower(): choice["choice"] for choice in all_options[alias_key].choices}
+            selected = next((choices[name.lower()] for name in aliases_for_value if name.lower() in choices), None)
+            if selected:
+                marked[alias_key] = selected
+        for key, value in options.items():
+            if key in all_options:
+                choices = {choice["choice"].lower(): choice["choice"] for choice in all_options[key].choices}
+                if value.lower() in choices:
+                    marked[key] = choices[value.lower()]
+        for key, value in marked.items():
+            ppd.markOption(key, value)
+        if ppd.conflicts():
+            raise ValueError("所選的紙張、紙匣或列印設定不能同時使用，請調整其中一項，或改回「自動」。")
+        return True
 
     def print_file(self, printer, path, title, options):
         return self._call(lambda conn: conn.printFile(printer, str(path), title, options))

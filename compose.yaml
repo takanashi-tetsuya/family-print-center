@@ -1,0 +1,53 @@
+services:
+  print-center:
+    build: .
+    image: family-print-center:local
+    container_name: family-print-center
+    restart: unless-stopped
+    # DNS-SD discovery and CUPS resolve printers on the same LAN as OpenWrt.
+    network_mode: host
+    environment:
+      HOST: ${PRINT_CENTER_HOST:-127.0.0.1}
+      PORT: ${PRINT_CENTER_PORT:-8080}
+      DATA_DIR: /var/lib/family-print-center
+      CUPS_SERVER: 127.0.0.1
+      CUPS_PORT: "631"
+      CUPS_USER: familyprint
+      CUPS_PASSWORD_FILE: /run/family-print-center/cups-password
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
+      CONVERSION_TIMEOUT: ${CONVERSION_TIMEOUT:-180}
+      RETENTION_HOURS: ${RETENTION_HOURS:-24}
+      SOURCE_CODE_URL: ${SOURCE_CODE_URL:-}
+      # Only read before the first administrator password exists; empty means generate one.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      TZ: Asia/Tokyo
+    volumes:
+      - app-data:/var/lib/family-print-center
+      - cups-config:/etc/cups
+      - cups-spool:/var/spool/cups
+    tmpfs:
+      - /run:size=32m,mode=755
+      - /tmp:size=512m,mode=1777
+    # Nothing in the container needs setuid programs or raw network access after start-up.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - NET_RAW
+      - MKNOD
+    # USB printers: uncomment so CUPS in the container can see them, then add the
+    # printer from the admin page (/admin). Network printers need nothing extra.
+    # devices:
+    #   - /dev/bus/usb:/dev/bus/usb
+    mem_limit: 3g
+    pids_limit: 256
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  app-data:
+  cups-config:
+  cups-spool:

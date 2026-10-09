@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <meta name="robots" content="noindex">
+  <title>管理後台 · 家庭打印中心</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='20' cy='20' r='20' fill='%23e580a0'/%3E%3Cpath d='M12 17V9h16v8M12 28H8V17h24v11h-4M12 23h16v11H12z' fill='none' stroke='%23111' stroke-width='2.5' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+  <script src="{{ url_for('static', filename='admin.js') }}" defer></script>
+</head>
+<body>
+  <header class="lu-header">
+    <div class="lu-header-inner">
+      <a class="lu-brand" href="/admin">家庭打印中心<small>管理後台</small></a>
+      <nav id="admin-menu" class="lu-menu" aria-label="管理選單" hidden>
+        <a href="#status" data-view="status">狀態</a>
+        <a href="#printers" data-view="printers">打印機</a>
+        <a href="#add" data-view="add">新增打印機</a>
+        <a href="#jobs" data-view="jobs">打印任務</a>
+        <a href="#fonts" data-view="fonts">字體</a>
+        <a href="#system" data-view="system">系統</a>
+      </nav>
+      <div class="lu-header-right">
+        <a href="/">回到打印頁</a>
+        <button id="logout" class="lu-link" type="button" hidden>登出</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="maincontent" class="lu-container">
+    <noscript><div class="alert-message error">管理後台需要啟用 JavaScript。</div></noscript>
+    <div id="notices" class="lu-notices" aria-live="polite"></div>
+
+    <section id="view-loading" class="lu-view">
+      <p class="lu-loading"><span class="spinning"></span>正在載入…</p>
+    </section>
+
+    <section id="view-login" class="lu-view" hidden>
+      <form id="login-form" class="lu-login" autocomplete="on">
+        <h2>需要登入</h2>
+        <p class="cbi-map-descr">管理打印機需要管理員密碼。一般家人列印不需要登入。</p>
+        <div class="cbi-section">
+          <input type="text" name="username" value="admin" autocomplete="username" hidden>
+          <div class="cbi-value">
+            <label class="cbi-value-title" for="login-password">管理員密碼</label>
+            <div class="cbi-value-field"><input id="login-password" type="password" autocomplete="current-password" maxlength="128" required></div>
+          </div>
+        </div>
+        <div id="login-hint" class="alert-message notice" hidden>
+          <strong>第一次使用？</strong>初始密碼保存在伺服器上。在 OpenWrt 的終端機執行下面指令即可看到：
+          <code>docker exec family-print-center cat /var/lib/family-print-center/admin-initial-password</code>
+        </div>
+        <div class="cbi-page-actions">
+          <button class="btn cbi-button-action" type="submit">登入</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="view-status" class="lu-view" hidden>
+      <h2>狀態</h2>
+      <p class="cbi-map-descr">打印服務與打印機目前的情況。</p>
+      <div class="cbi-section">
+        <h3>概況</h3>
+        <table class="table lu-kv" id="status-table"></table>
+      </div>
+      <div class="cbi-section">
+        <h3>打印機</h3>
+        <div id="status-printers"></div>
+      </div>
+    </section>
+
+    <section id="view-printers" class="lu-view" hidden>
+      <h2>打印機</h2>
+      <p class="cbi-map-descr">已加入的打印機。家人列印時會看到這裡的「顯示名稱」。</p>
+      <div class="cbi-section">
+        <div id="printers-table"></div>
+        <div class="cbi-section-create"><a class="btn cbi-button-add" href="#add">新增打印機</a></div>
+      </div>
+    </section>
+
+    <section id="view-add" class="lu-view" hidden>
+      <h2>新增打印機</h2>
+      <p class="cbi-map-descr">先試「自動檢測」。找不到的話，再輸入打印機的 IP 位址。</p>
+
+      <div class="cbi-section">
+        <h3>自動檢測</h3>
+        <p class="cbi-section-descr">尋找同一個網路上的打印機，以及用 USB 線接在路由器上的打印機，大約需要 10 秒。</p>
+        <div class="lu-actions-row">
+          <button id="scan" class="btn cbi-button-action" type="button">開始檢測</button>
+          <span id="scan-status" class="lu-progress" hidden><span class="spinning"></span>正在檢測…</span>
+        </div>
+        <div id="scan-results"></div>
+      </div>
+
+      <div class="cbi-section">
+        <h3>輸入 IP 位址</h3>
+        <p class="cbi-section-descr">IP 位址通常可以在打印機面板的「網路」設定，或列印出來的「網路設定頁」上找到。</p>
+        <form id="probe-form" class="lu-inline-form">
+          <label class="cbi-value-title" for="probe-host">IP 位址或名稱</label>
+          <input id="probe-host" type="text" placeholder="例如 192.168.1.50" maxlength="253" autocomplete="off" spellcheck="false" required>
+          <button class="btn cbi-button-action" type="submit">檢測</button>
+        </form>
+        <div id="probe-result"></div>
+        <details id="manual" class="lu-details">
+          <summary>手動指定連線方式（進階）</summary>
+          <form id="manual-form">
+            <div class="cbi-value">
+              <label class="cbi-value-title" for="manual-protocol">連線方式</label>
+              <div class="cbi-value-field">
+                <select id="manual-protocol">
+                  <option value="ipp">網路列印（大多數打印機，建議）</option>
+                  <option value="ipps">加密網路列印</option>
+                  <option value="socket">直接傳送（9100 埠）</option>
+                  <option value="lpd">舊式網路列印（LPD）</option>
+                </select>
+              </div>
+            </div>
+            <div class="cbi-value">
+              <label class="cbi-value-title" for="manual-host">IP 位址或名稱</label>
+              <div class="cbi-value-field"><input id="manual-host" type="text" placeholder="例如 192.168.1.50" maxlength="253" autocomplete="off" spellcheck="false" required></div>
+            </div>
+            <div class="cbi-value">
+              <label class="cbi-value-title" for="manual-port">連接埠</label>
+              <div class="cbi-value-field"><input id="manual-port" type="number" min="1" max="65535" placeholder="自動"><p class="cbi-value-description">留空會使用常見設定。</p></div>
+            </div>
+            <div class="cbi-value">
+              <label class="cbi-value-title" for="manual-path">路徑／佇列名稱</label>
+              <div class="cbi-value-field"><input id="manual-path" type="text" maxlength="128" placeholder="通常留空" autocomplete="off" spellcheck="false"><p class="cbi-value-description">只有打印機說明書另有指定時才需要填寫。</p></div>
+            </div>
+            <div class="cbi-page-actions"><button class="btn cbi-button-action" type="submit">下一步：選擇驅動</button></div>
+          </form>
+        </details>
+      </div>
+
+      <div class="cbi-section">
+        <h3>上傳驅動檔</h3>
+        <p class="cbi-section-descr">清單裡找不到你的型號時，可以上傳廠商提供的 PostScript 驅動檔（副檔名 .ppd）。需要另外安裝程式的驅動，無法用上傳的方式加入。</p>
+        <form id="ppd-form" class="lu-inline-form">
+          <label class="cbi-value-title" for="ppd-file">驅動檔</label>
+          <input id="ppd-file" type="file" accept=".ppd,.gz" required>
+          <button class="btn cbi-button-action" type="submit">上傳</button>
+        </form>
+        <div id="ppd-list"></div>
+      </div>
+    </section>
+
+    <section id="view-jobs" class="lu-view" hidden>
+      <h2>打印任務</h2>
+      <p class="cbi-map-descr">所有人送出的打印任務，最新的在最上面。卡住的任務可以在這裡取消。</p>
+      <div class="cbi-section">
+        <div class="lu-actions-row"><button id="refresh-jobs" class="btn" type="button">重新整理</button></div>
+        <div id="jobs-table"></div>
+      </div>
+    </section>
+
+    <section id="view-fonts" class="lu-view" hidden>
+      <h2>字體</h2>
+      <p class="cbi-map-descr">Word、Excel、PowerPoint 文件用到伺服器沒有的字體時，會改用其他字體，排版可能和原本略有不同。</p>
+      <div class="cbi-section">
+        <h3>最近缺少的字體</h3>
+        <p class="cbi-section-descr">家人最近上傳的文件用到、伺服器上沒有的字體。加入同名字體後，它就會從這裡消失。</p>
+        <div id="missing-fonts"></div>
+      </div>
+      <div class="cbi-section">
+        <h3>加入字體</h3>
+        <p class="cbi-section-descr">可以從自己的 Windows 電腦複製（C:\Windows\Fonts），支援 .ttf、.otf、.ttc，每個檔案最多 64 MB。加入後立即生效，不用重新啟動；打印頁上已放入的文件列印時也會使用，但要重新放入才會看到新的預覽。商業字體只限家中自用。</p>
+        <form id="font-form" class="lu-inline-form">
+          <label class="cbi-value-title" for="font-file">字體檔</label>
+          <input id="font-file" type="file" accept=".ttf,.otf,.ttc,.otc" required>
+          <button class="btn cbi-button-action" type="submit">上傳</button>
+        </form>
+        <div id="font-list"></div>
+      </div>
+    </section>
+
+    <section id="view-system" class="lu-view" hidden>
+      <h2>系統</h2>
+      <div id="must-change" class="alert-message warning" hidden>你正在使用系統產生的初始密碼。請先設定一個新密碼，之後才能管理打印機。</div>
+      <div class="cbi-section">
+        <h3>更改管理員密碼</h3>
+        <form id="password-form">
+          <input type="text" name="username" value="admin" autocomplete="username" hidden>
+          <div class="cbi-value">
+            <label class="cbi-value-title" for="password-current">目前的密碼</label>
+            <div class="cbi-value-field"><input id="password-current" type="password" autocomplete="current-password" maxlength="128" required></div>
+          </div>
+          <div class="cbi-value">
+            <label class="cbi-value-title" for="password-new">新密碼</label>
+            <div class="cbi-value-field"><input id="password-new" type="password" autocomplete="new-password" minlength="8" maxlength="128" required><p class="cbi-value-description">至少 8 個字元。改密碼後，其他已登入的瀏覽器會被登出。</p></div>
+          </div>
+          <div class="cbi-value">
+            <label class="cbi-value-title" for="password-again">再輸入一次</label>
+            <div class="cbi-value-field"><input id="password-again" type="password" autocomplete="new-password" minlength="8" maxlength="128" required></div>
+          </div>
+          <div class="cbi-page-actions"><button class="btn cbi-button-positive" type="submit">儲存新密碼</button></div>
+        </form>
+      </div>
+      <div class="cbi-section">
+        <h3>忘記密碼</h3>
+        <p class="cbi-section-descr">在 OpenWrt 的終端機刪除密碼檔並重新啟動，系統會產生新的初始密碼：</p>
+        <pre class="lu-code">docker exec family-print-center rm /var/lib/family-print-center/admin.json
+docker restart family-print-center</pre>
+      </div>
+    </section>
+  </main>
+
+  <footer class="lu-footer">家庭打印中心 · 管理後台 <a href="/">回到打印頁</a>{% if source_code_url %} <a href="{{ source_code_url }}" target="_blank" rel="noopener noreferrer">原始碼</a>{% endif %}</footer>
+
+  <dialog id="printer-dialog" class="lu-modal" aria-labelledby="printer-dialog-title">
+    <form id="printer-form" method="dialog">
+      <h3 id="printer-dialog-title">新增打印機</h3>
+      <p id="printer-dialog-source" class="cbi-section-descr"></p>
+      <div class="cbi-value">
+        <label class="cbi-value-title" for="printer-info">顯示名稱</label>
+        <div class="cbi-value-field"><input id="printer-info" type="text" maxlength="127" required><p class="cbi-value-description">家人選打印機時看到的名字，例如「客廳黑白雷射」。</p></div>
+      </div>
+      <div class="cbi-value">
+        <label class="cbi-value-title" for="printer-location">位置</label>
+        <div class="cbi-value-field"><input id="printer-location" type="text" maxlength="127" placeholder="可留空，例如：書房"></div>
+      </div>
+      <div class="cbi-value">
+        <label class="cbi-value-title" for="printer-driver">驅動程式</label>
+        <div class="cbi-value-field">
+          <select id="printer-driver" required></select>
+          <p id="printer-driver-note" class="cbi-value-description"></p>
+          <div id="driver-search" class="lu-driver-search" hidden>
+            <input id="driver-query" type="search" placeholder="輸入品牌和型號，例如 brother l2700" maxlength="100" autocomplete="off" spellcheck="false">
+            <select id="driver-results" size="6" aria-label="搜尋結果"></select>
+            <p id="driver-search-note" class="cbi-value-description"></p>
+          </div>
+        </div>
+      </div>
+      <div id="printer-default-row" class="cbi-value">
+        <span class="cbi-value-title">預設</span>
+        <div class="cbi-value-field"><label class="lu-check"><input id="printer-default" type="checkbox">設為預設打印機</label></div>
+      </div>
+      <div id="printer-dialog-error" class="alert-message error" hidden></div>
+      <div class="cbi-page-actions">
+        <button id="printer-cancel" class="btn" type="button">取消</button>
+        <button id="printer-save" class="btn cbi-button-positive" type="submit">新增</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="lu-modal lu-modal-small" aria-labelledby="confirm-title">
+    <form method="dialog">
+      <h3 id="confirm-title">確認</h3>
+      <p id="confirm-body"></p>
+      <div class="cbi-page-actions">
+        <button class="btn" value="cancel">取消</button>
+        <button id="confirm-ok" class="btn cbi-button-negative" value="ok">確定</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

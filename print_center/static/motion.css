@@ -1,0 +1,249 @@
+/* Motion layer. Every effect here is decorative; the printing controls work without it.
+   Text is never animated by position: only flat shapes move, and words simply fade in. */
+:root {
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
+  --ease-in-out: cubic-bezier(.76, 0, .24, 1);
+  --ease-back: cubic-bezier(.34, 1.4, .64, 1);
+}
+
+/* ---------- Intro locking and hand-off ---------- */
+html.is-hero-locked,
+html.is-hero-locked body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.motion-deeplink .welcome { display: none; }
+
+body.is-leaving .site-header {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .3s ease;
+}
+
+.welcome.is-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  height: 100%;
+  min-height: 0;
+  background: transparent;
+  clip-path: inset(0 0 0 0);
+}
+.welcome.is-lifting {
+  clip-path: inset(0 0 100% 0);
+  transition: clip-path .9s var(--ease-in-out);
+}
+
+/* ---------- Intro ---------- */
+/* Hidden until the script says go; a delayed safety animation shows everything if it never does. */
+.motion-js:not(.motion-off):not(.motion-reduced) .welcome:not(.is-ready) .hero-intro,
+.motion-js:not(.motion-off):not(.motion-reduced) .welcome:not(.is-ready) .hero-wordmark,
+.motion-js:not(.motion-off):not(.motion-reduced) .welcome:not(.is-ready) .hero-enter {
+  opacity: 0;
+  animation: intro-safety 0s 4s forwards;
+}
+@keyframes intro-safety { to { opacity: 1; } }
+
+/* Words fade in where they stand; only the disc grows. */
+.welcome.is-ready .hero-intro { animation: fade-in .9s ease .15s backwards; }
+.welcome.is-ready .hero-wordmark { animation: fade-in 1.1s ease .45s backwards; }
+.welcome.is-ready .hero-enter::before { animation: disc-in 1s var(--ease-back) .55s backwards; }
+.welcome.is-ready .hero-enter-label { animation: fade-in .6s ease 1s backwards; }
+
+@keyframes disc-in { from { scale: 0; } }
+@keyframes fade-in { from { opacity: 0; } }
+
+/* The disc follows the pointer with a little lag (set from motion.js). */
+.hero-enter { will-change: translate; }
+
+/* Leaving: the words fade and the disc grows until it covers the screen. */
+.welcome.is-leaving .hero-intro,
+.welcome.is-leaving .hero-wordmark {
+  opacity: 0;
+  transition: opacity .35s ease;
+  animation: none;
+}
+.welcome.is-leaving .hero-enter-label,
+.welcome.is-leaving .hero-enter::after { opacity: 0; transition: opacity .2s ease; animation: none; }
+.welcome.is-leaving .hero-enter::before {
+  animation: none;
+  scale: var(--cover-scale, 16);
+  background: var(--pink);
+  transition: scale .85s var(--ease-in-out), background .45s ease .15s;
+}
+
+/* ---------- Scroll progress ---------- */
+.scroll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 60;
+  height: 2px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .4s;
+}
+.scroll-progress span {
+  display: block;
+  height: 100%;
+  background: var(--pink);
+  transform-origin: left center;
+  transform: scaleX(var(--progress, 0));
+}
+body.has-entered .scroll-progress { opacity: 1; }
+
+/* ---------- Header menu ---------- */
+.header-menu[open] nav { animation: menu-in .35s var(--ease-out) both; }
+@keyframes menu-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------- Panel reveal: the rule draws across, the content fades in place ---------- */
+.reveal-pending { opacity: 0; }
+.reveal-pending::before { transform: scaleX(0); }
+.is-revealing { transition: opacity .8s ease var(--reveal-delay, 0s); }
+.is-revealing::before { transition: transform 1.1s var(--ease-in-out) var(--reveal-delay, 0s); }
+
+/* ---------- Printer figure ---------- */
+/* It pops up once when the workspace opens (on the outer svg, so stage
+   animations on the inner figure never replay it), then blinks now and then. */
+.workspace-heading.is-shown .buddy { transform-origin: 50% 92%; animation: buddy-pop .9s var(--ease-back) .35s backwards; }
+@keyframes buddy-pop { from { transform: translateY(26px) scale(.86); opacity: 0; } }
+
+.buddy-figure { transition: transform .6s var(--ease-back); }
+.buddy-in,
+.buddy-out { transition: transform .7s var(--ease-out); }
+.buddy-face { transition: transform .5s var(--ease-out); }
+.eyes-open { transform-box: fill-box; transform-origin: center; animation: buddy-blink 6s ease-in-out 2s infinite; }
+@keyframes buddy-blink { 0%, 94%, 100% { transform: scaleY(1); } 96.5% { transform: scaleY(.12); } }
+
+/* Waiting for a document: a slow, small breath. */
+.workspace-stage[data-stage="preparing"] .buddy-figure { animation: buddy-breathe 1.8s ease-in-out infinite; }
+@keyframes buddy-breathe { 50% { transform: translateY(-4px); } }
+
+/* Everything ready: one small hop. */
+.workspace-stage[data-stage="ready"] .buddy-figure { animation: buddy-hop .7s var(--ease-back); }
+@keyframes buddy-hop { 40% { transform: translateY(-12px); } }
+
+/* Printing: the page feeds in at the top and slides out of the slot, again and again. */
+.workspace-stage[data-stage="printing"] .buddy-in { transition-duration: 1.4s; }
+.workspace-stage[data-stage="printing"] .buddy-out { animation: buddy-feed 2.2s var(--ease-in-out) infinite; }
+.workspace-stage[data-stage="printing"] .buddy-lamp { animation: buddy-lamp .9s steps(2) infinite; }
+@keyframes buddy-feed {
+  0% { transform: translateY(0); opacity: 1; }
+  70% { transform: translateY(58px); opacity: 1; }
+  100% { transform: translateY(58px); opacity: 0; }
+}
+@keyframes buddy-lamp { 50% { fill: var(--ink); } }
+
+
+/* ---------- Step marks ---------- */
+.step-number::before,
+.step-number::after { transition: transform .5s var(--ease-back), opacity .3s ease; }
+.panel::before { transition: background .4s ease, height .4s ease; }
+
+/* ---------- Upload zone ---------- */
+.upload-art > i { transition: transform .6s var(--ease-out); }
+.upload-zone:hover .sheet-front,
+.upload-zone:focus-within .sheet-front { transform: translate(4px, -10px) rotate(5deg); }
+.upload-zone:hover .sheet-back,
+.upload-zone:focus-within .sheet-back { transform: translate(-6px, -2px) rotate(-14deg); }
+.upload-zone:hover .sheet-badge,
+.upload-zone:focus-within .sheet-badge { transform: translateY(-6px); }
+.upload-zone.dragging .sheet-front { transform: translate(0, -18px) rotate(0deg); }
+.upload-zone.dragging .sheet-back { transform: translate(0, -10px) rotate(-6deg); }
+
+/* ---------- Print button ---------- */
+.print-button { transition: background .35s ease, color .35s, border-color .35s, scale .17s; }
+
+/* ---------- Status blocks ---------- */
+.file-list,
+.conversion-progress,
+.native-document,
+.file-error,
+.notice { animation: fade-in .5s ease both; }
+
+/* ---------- Preview prints out of a slot ---------- */
+.preview-frame { isolation: isolate; }
+.preview-frame.is-printing #pdf-preview { animation: print-out 1.1s cubic-bezier(.65, 0, .35, 1) both; }
+.preview-frame::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 2;
+  height: 2px;
+  background: var(--pink);
+  opacity: 0;
+  pointer-events: none;
+}
+.preview-frame.is-printing::before { animation: print-head 1.1s cubic-bezier(.65, 0, .35, 1) both; }
+@keyframes print-out { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes print-head { 0% { opacity: 1; transform: translateY(0); } 92% { opacity: 1; transform: translateY(var(--print-distance, 420px)); } 100% { opacity: 0; transform: translateY(var(--print-distance, 420px)); } }
+
+/* ---------- Toasts and dialogs ---------- */
+.toast { position: relative; overflow: hidden; animation: fade-in .35s ease both; }
+.toast::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--pink);
+  transform-origin: left center;
+  animation: toast-timer 6.5s linear both;
+}
+.toast.error::after { background: var(--ink); animation-duration: 10s; }
+@keyframes toast-timer { to { transform: scaleX(0); } }
+
+dialog[open] { animation: fade-in .3s ease both; }
+dialog[open]::backdrop { animation: fade-in .3s ease both; }
+
+/* ---------- Paper pieces after a print job ---------- */
+.fx-canvas { position: fixed; inset: 0; z-index: 250; width: 100%; height: 100%; pointer-events: none; }
+
+/* ---------- Motion switched off or reduced ---------- */
+.motion-off .reveal-pending,
+.motion-off .is-revealing,
+.motion-off .is-revealing::before,
+.motion-off .hero-enter::before,
+.motion-off .hero-enter::after,
+.motion-off .buddy-in,
+.motion-off .buddy-out,
+.motion-off .buddy-face,
+.motion-off .buddy-figure,
+.motion-off .upload-art > i { transition: none !important; }
+.motion-off .reveal-pending { opacity: 1; }
+.motion-off .reveal-pending::before { transform: none; }
+.motion-off .toast,
+.motion-off .toast::after,
+.motion-off dialog[open],
+.motion-off .notice,
+.motion-off .file-list,
+.motion-off .conversion-progress,
+.motion-off .native-document,
+.motion-off .file-error,
+.motion-off .header-menu[open] nav,
+.motion-off .welcome .hero-intro,
+.motion-off .welcome .hero-wordmark,
+.motion-off .welcome .hero-enter,
+.motion-off .welcome .hero-enter::before,
+.motion-off .welcome .hero-enter-label,
+.motion-off .buddy,
+.motion-off .buddy-figure,
+.motion-off .buddy-out,
+.motion-off .buddy-lamp,
+.motion-off .eyes-open { animation: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-pending { opacity: 1; }
+  .reveal-pending::before { transform: none; }
+  .hero-enter { translate: none !important; }
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,39 @@
+name: Tests
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libcups2-dev python3-dev python3-venv python3-uno \
+            libreoffice-writer libreoffice-calc libreoffice-impress \
+            fontconfig fonts-dejavu-core fonts-liberation unzip cabextract
+          python3 -m venv --system-site-packages .venv
+          .venv/bin/python -m pip install -r requirements-dev.txt
+      - name: Check required integration tools
+        run: |
+          .venv/bin/python -c 'import uno; from ctypes.util import find_library; assert find_library("cups")'
+          command -v soffice
+          command -v cc
+          command -v fc-scan
+          command -v node
+      - name: Validate public source
+        run: .venv/bin/python tools/prepare_public_release.py --check
+      - name: Python tests
+        run: .venv/bin/python -m pytest -q
+      - name: Browser logic tests
+        run: |
+          node tests/check_browser_preferences.js
+          node tests/check_upload_queue.js

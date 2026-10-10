@@ -7,7 +7,7 @@ import io
 import json
 import re
 import tarfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ROOT_FILES = {
     ".gitignore", ".dockerignore", ".env.example", ".gitattributes",
@@ -98,6 +98,17 @@ def export_bundle(root, output, records):
     with archive.open("wb") as target:
         with gzip.GzipFile(fileobj=target, mode="wb", filename="", mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w") as bundle:
+                # Implicit parent directories inherit the extracting process's
+                # umask. Include them so a root extraction under umask 077 is
+                # still readable and traversable by the application user.
+                directories = {"family-print-center"}
+                for record in records:
+                    directories.update("family-print-center/" + parent.as_posix()
+                                       for parent in PurePosixPath(record["path"]).parents if parent.parts)
+                for name in sorted(directories):
+                    info = tarfile.TarInfo(name + "/")
+                    info.type, info.mode, info.mtime = tarfile.DIRTYPE, 0o755, 0
+                    bundle.addfile(info)
                 for record in records:
                     data = (root / record["path"]).read_bytes()
                     if hashlib.sha256(data).hexdigest() != record["sha256"]:

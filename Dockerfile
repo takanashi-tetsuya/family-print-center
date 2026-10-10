@@ -95,6 +95,7 @@ COPY deploy/healthcheck.py deploy/doctor.py /opt/print-center/
 COPY deploy/office_worker.py /app/deploy/office_worker.py
 COPY --from=python-build /build/cups_options_shim.so /app/deploy/cups_options_shim.so
 RUN chmod 755 /usr/local/bin/print-center-entrypoint \
+    && chmod -R a+rX /app/print_center \
     && cp /opt/print-center/defaults/cupsd.conf /etc/cups/cupsd.conf \
     && cp /opt/print-center/defaults/cups-files.conf /etc/cups/cups-files.conf \
     && chmod 640 /etc/cups/cupsd.conf /etc/cups/cups-files.conf \

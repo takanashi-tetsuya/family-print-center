@@ -1,7 +1,9 @@
 import json
 import sys
 import zipfile
+from contextlib import nullcontext
 from types import SimpleNamespace
+from urllib.error import HTTPError
 
 import pymupdf as fitz
 import pytest
@@ -96,6 +98,32 @@ def test_health_accepts_all_three_successful_preview_results(tmp_path, monkeypat
     marker.write_text(json.dumps(ready_record()))
     monkeypatch.setattr(healthcheck, "Path", lambda _path: marker)
     healthcheck.office_ready()
+
+
+@pytest.mark.parametrize("broken", ["/", "/static/style.css", "/static/app.js", "/static/app/core.js", None])
+def test_health_rejects_broken_page_or_assets_even_when_api_is_alive(monkeypatch, broken):
+    monkeypatch.setattr(healthcheck, "office_ready", lambda: None)
+    monkeypatch.setattr(healthcheck.socket, "create_connection", lambda *a, **k: nullcontext())
+    monkeypatch.setattr(healthcheck.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setenv("HOST", "192.0.2.1")
+    monkeypatch.setenv("PORT", "8080")
+    fetched = []
+
+    def get(url, timeout):
+        path = url.removeprefix("http://192.0.2.1:8080")
+        fetched.append(path)
+        if path == broken:
+            raise HTTPError(url, 500, "Unreadable web resource", {}, None)
+        return nullcontext(SimpleNamespace(status=200))
+
+    monkeypatch.setattr(healthcheck.urllib.request, "urlopen", get)
+    if broken:
+        with pytest.raises(HTTPError):
+            healthcheck.main()
+        assert "/healthz" in fetched and broken in fetched
+    else:
+        healthcheck.main()
+        assert "/" in fetched and "/static/app/core.js" in fetched
 
 
 @pytest.fixture

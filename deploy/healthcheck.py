@@ -37,9 +37,12 @@ def main():
          "--dest=org.freedesktop.Avahi", "/", "org.freedesktop.Avahi.Server.GetVersionString"],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3,
     )
-    with urllib.request.urlopen(f"http://{authority}:{port}/healthz", timeout=5) as response:
-        if response.status != 200:
-            raise RuntimeError("Application health check failed")
+    # A live API can hide unreadable templates or static directories. Check
+    # the actual page and its entry points as the web server's app user too.
+    for path in ("/healthz", "/", "/static/style.css", "/static/app.js", "/static/app/core.js"):
+        with urllib.request.urlopen(f"http://{authority}:{port}{path}", timeout=3) as response:
+            if response.status != 200:
+                raise RuntimeError("Application page or assets health check failed")
 
 
 if __name__ == "__main__":

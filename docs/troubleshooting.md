@@ -171,9 +171,23 @@ zone 可能是匿名 UCI 項，不一定叫 `firewall.wan`；用 `uci show firew
 
 PowerPoint 原稿不接受四邊頁邊距覆蓋，因為 LibreOffice 的投影片邊界屬性不會可靠地縮入所有圖形。請保留自動，或由原軟體另存 PDF 再上傳；程序不會自動把 Office 預覽 PDF 改作打印來源。含投影片的多文件批次會先檢查此限制，不先印出前面的文件再失敗。
 
+## 容器健康但首頁或靜態資源無法讀取
+
+先檢查首頁與 `/static/app/core.js`，不要只看 `/healthz`。若日誌出現模板或靜態資源的 `PermissionError`，以應用帳號核對目錄是否可遍歷：
+
+```sh
+docker exec -u familyprint family-print-center python -c 'from pathlib import Path; print(Path("/app/print_center/templates/index.html").stat()); print(Path("/app/print_center/static/app/core.js").read_text()[:40])'
+```
+
+來源壓縮包若只含文件、缺少目錄條目，在 `umask 077` 下解壓會建立 `0700` 的 root 目錄，即使文件本身是 `0644`，應用帳號仍不能讀取。新版發布工具明確保存公開目錄的 `0755` 權限；部分 BusyBox 版本仍會套用 umask，因此解壓公開來源到獨立暫存目錄時使用 `umask 022`，並檢查結果。Dockerfile 亦確保公開應用目錄可讀、可遍歷；修正來源後重建並重新啟用容器，不以臨時修改運行容器代替建置修正。此權限處理僅針對公開程式，不能對資料卷、`.env` 或憑證目錄套用。
+
+新版健康檢查同時請求首頁、CSS 與 JavaScript 入口；它仍不代替所有瀏覽器交互或實體打印測試。
+
+OpenWrt 的精簡 BusyBox `tar` 不一定提供 `--strip-components`。本專案來源包包含一層 `family-print-center/` 目錄，先解壓到獨立暫存目錄，再從該目錄同步允許發布的文件。更新既有部署時保留 `.env`、本機字體快取及所有資料卷，並先備份。
+
 ## LibreOffice 啟動／預覽／選打印機失敗
 
-程式固定 `svp`，不需 X11。啟動以普通應用帳號生成三種 Office 預覽，成功記錄在本次 `/run`，失敗不啟動網頁。健康檢查讀此記錄，不每 30 秒重啟 LibreOffice：
+程式固定 `svp`，不需 X11。啟動以普通應用帳號生成三種 Office 預覽，成功記錄在本次 `/run`，失敗不啟動網頁。健康檢查讀此記錄，並請求首頁及前端入口資源，不每 30 秒重啟 LibreOffice：
 
 ```sh
 docker compose logs --tail=100

@@ -76,6 +76,8 @@ docker compose logs --tail=80
 
 開啟 `http://<主機的 LAN 位址>:8080/`。容器使用主機網路供 Bonjour 探索及打印連線；CUPS 僅監聽 loopback 和容器內 UNIX socket，不開放其網頁管理介面。打印服務不掛載 Docker socket。
 
+要使用容易記的家庭網址，可由 OpenWrt DNS 配合既有 uhttpd 將指定名稱跳轉至打印中心，保留 LuCI 的 80／443 入口，見[家庭網址設定教程](docs/local-domain.md)。
+
 建置入口優先使用本機 Buildx；沒有時使用官方 `docker:29-cli` 臨時容器及已確認的本機 Unix socket。遠端 Docker context 不適用此備援。Docker Hub 無法連線時可改用官方 ECR Public 映像：
 
 ```sh
